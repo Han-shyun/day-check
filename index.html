@@ -26,6 +26,7 @@
             maxlength="120"
             required
           />
+          <input id="dueDateInput" type="date" aria-label="할 일 날짜" />
           <select id="prioritySelect" aria-label="우선순위">
             <option value="3">높음</option>
             <option value="2" selected>보통</option>
@@ -73,6 +74,38 @@
           </div>
           <ul id="list-inbox" class="todo-list"></ul>
         </article>
+      </section>
+
+      <section class="card calendar" aria-label="달력">
+        <div class="calendar-head">
+          <h2>달력</h2>
+          <div class="calendar-nav">
+            <button id="prevMonthBtn" type="button">이전 달</button>
+            <p id="calendarMonthLabel" class="muted"></p>
+            <button id="nextMonthBtn" type="button">다음 달</button>
+          </div>
+        </div>
+
+        <form id="calendarForm" class="calendar-form">
+          <input id="calendarDateInput" type="date" required aria-label="달력 날짜" />
+          <select id="calendarTypeSelect" aria-label="달력 항목 유형">
+            <option value="note">별도 메모</option>
+            <option value="todo">체크리스트</option>
+          </select>
+          <input
+            id="calendarTextInput"
+            type="text"
+            maxlength="140"
+            placeholder="달력에 표시할 내용 (예: 세무서 방문, 아이디어 메모)"
+            required
+          />
+          <button type="submit">달력에 추가</button>
+        </form>
+
+        <div class="calendar-weekdays" aria-hidden="true">
+          <span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span><span>일</span>
+        </div>
+        <div id="calendarGrid" class="calendar-grid"></div>
       </section>
 
       <section class="card report" aria-label="주간 리포트">
