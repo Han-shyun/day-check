@@ -1,0 +1,437 @@
+:root {
+  --bg: #f6f7fb;
+  --card: #ffffff;
+  --line: #e4e7ec;
+  --text: #101828;
+  --muted: #667085;
+  --accent: #03c75a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans KR', sans-serif;
+}
+
+.layout {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 2px 8px rgba(16, 24, 40, 0.04);
+}
+
+.topbar {
+  padding: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+h1 {
+  margin: 6px 0 4px;
+  font-size: 24px;
+}
+
+h2,
+h3,
+h4,
+p {
+  margin: 0;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.naver-btn,
+button {
+  font: inherit;
+}
+
+.naver-btn {
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+.todo-panel,
+.todo-list-panel,
+.calendar,
+.report {
+  padding: 14px;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.todo-composer {
+  display: grid;
+  gap: 10px;
+}
+
+#todoTextarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  resize: vertical;
+  min-height: 120px;
+}
+
+.composer-row {
+  display: grid;
+  grid-template-columns: auto auto auto auto auto;
+  gap: 8px;
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+}
+
+.composer-row input,
+.composer-row select,
+.inline-category-create input,
+#calendarDateInput,
+#calendarTypeSelect,
+#calendarTextInput,
+.todo-category-select {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: #fff;
+}
+
+.composer-row button,
+.inline-category-create button,
+.calendar-nav button,
+#calendarForm button,
+.complete,
+.delete {
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 12px;
+}
+
+.composer-row button,
+#calendarForm button,
+.calendar-nav button {
+  background: #111827;
+  color: #fff;
+}
+
+.inline-category-create {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.inline-category-create button:first-of-type {
+  background: #1570ef;
+  color: #fff;
+}
+
+.inline-category-create button:last-of-type {
+  background: #f2f4f7;
+  color: #344054;
+}
+
+.hidden {
+  display: none;
+}
+
+.count {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  min-width: 30px;
+  text-align: center;
+  padding: 2px 8px;
+  color: var(--muted);
+}
+
+.todo-list,
+.report-list,
+.calendar-item-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.todo-item {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.todo-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.title {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.todo-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.todo-category-select {
+  max-width: 150px;
+}
+
+.complete {
+  background: #16a34a;
+  color: #fff;
+}
+
+.delete {
+  background: #f2f4f7;
+  color: #344054;
+}
+
+.calendar-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.calendar-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.calendar-form {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.calendar-cell {
+  min-height: 132px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px;
+  background: #fcfcfd;
+  cursor: pointer;
+}
+
+.calendar-cell.is-selected {
+  border-color: #1570ef;
+  box-shadow: inset 0 0 0 1px #1570ef;
+}
+
+.calendar-cell.is-empty {
+  background: #f9fafb;
+  cursor: default;
+}
+
+.calendar-day {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.calendar-summary {
+  margin: 2px 0 6px;
+  font-size: 11px;
+  color: #175cd3;
+}
+
+.calendar-empty,
+.calendar-more {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.calendar-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.calendar-item.is-todo {
+  background: #eff8ff;
+}
+
+.calendar-item.is-note {
+  background: #fef3f2;
+}
+
+.type-badge {
+  flex: none;
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: rgba(0, 0, 0, 0.08);
+  font-size: 11px;
+}
+
+.calendar-item-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-remove {
+  border: 0;
+  margin-left: auto;
+  border-radius: 6px;
+  width: 18px;
+  height: 18px;
+  line-height: 1;
+  background: #fee4e2;
+  color: #b42318;
+  font-size: 12px;
+}
+
+.calendar-detail {
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.calendar-detail-head {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.calendar-detail-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.calendar-detail-grid article,
+.report-grid article {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.report-grid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.report-list li {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: #fcfcfd;
+}
+
+@media (max-width: 1024px) {
+  .composer-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .calendar-form,
+  .calendar-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .calendar-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar,
+  .panel-head,
+  .calendar-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .composer-row,
+  .inline-category-create,
+  .calendar-form,
+  .calendar-detail-grid,
+  .report-grid,
+  .calendar-grid,
+  .calendar-weekdays {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .todo-item,
+  .todo-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .todo-category-select {
+    max-width: none;
+  }
+}
