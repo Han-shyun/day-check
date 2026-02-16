@@ -18,6 +18,7 @@ const state = {
   doneLog: loadState(DONE_STORAGE_KEY),
   calendarItems: loadState(CALENDAR_STORAGE_KEY),
   currentMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+  selectedDate: toLocalIsoDate(new Date()),
 };
 
 const dateEl = document.getElementById('todayDate');
@@ -37,6 +38,12 @@ const calendarGrid = document.getElementById('calendarGrid');
 const calendarMonthLabel = document.getElementById('calendarMonthLabel');
 const prevMonthBtn = document.getElementById('prevMonthBtn');
 const nextMonthBtn = document.getElementById('nextMonthBtn');
+
+const selectedDateLabel = document.getElementById('selectedDateLabel');
+const selectedDateSummary = document.getElementById('selectedDateSummary');
+const selectedCreatedList = document.getElementById('selectedCreatedList');
+const selectedCompletedList = document.getElementById('selectedCompletedList');
+const selectedCalendarNoteList = document.getElementById('selectedCalendarNoteList');
 
 const buckets = ['today', 'project', 'routine', 'inbox'];
 
@@ -66,8 +73,38 @@ function formatToday() {
   dateEl.textContent = fmt.format(now);
 }
 
-function isoDate(date) {
-  return date.toISOString().slice(0, 10);
+function toLocalIsoDate(date) {
+  const d = new Date(date);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+}
+
+function isoDate(isoText) {
+  return isoText.slice(0, 10);
+}
+
+function toDisplayDate(isoText) {
+  if (!isoText) {
+    return '-';
+  }
+  const date = new Date(isoText);
+  const fmt = new Intl.DateTimeFormat('ko-KR', { month: 'numeric', day: 'numeric', weekday: 'short' });
+  return fmt.format(date);
+}
+
+function toDisplayDateTime(isoText) {
+  if (!isoText) {
+    return '-';
+  }
+  const date = new Date(isoText);
+  const fmt = new Intl.DateTimeFormat('ko-KR', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  return fmt.format(date);
 }
 
 function startOfWeek(date) {
@@ -141,7 +178,7 @@ function renderTodos() {
       const deleteBtn = item.querySelector('.delete');
 
       titleEl.textContent = todo.title;
-      const dateText = todo.dueDate ? ` · 날짜: ${todo.dueDate}` : '';
+      const dateText = todo.dueDate ? ` · 일정: ${todo.dueDate}` : '';
       metaEl.textContent = `우선순위: ${priorityLabel[todo.priority] || '보통'}${dateText}`;
 
       completeBtn.addEventListener('click', () => {
@@ -150,6 +187,8 @@ function renderTodos() {
           title: todo.title,
           bucket: todo.bucket,
           priority: todo.priority,
+          dueDate: todo.dueDate || '',
+          createdAt: todo.createdAt,
           completedAt: new Date().toISOString(),
         });
         state.todos = state.todos.filter((t) => t.id !== todo.id);
@@ -166,6 +205,12 @@ function renderTodos() {
       listEl.appendChild(item);
     });
   }
+}
+
+function countDailyStats(dateText) {
+  const scheduledCount = state.todos.filter((todo) => todo.dueDate === dateText).length;
+  const completedCount = state.doneLog.filter((log) => isoDate(log.completedAt) === dateText).length;
+  return { scheduledCount, completedCount };
 }
 
 function getCalendarEntriesByDate(dateText) {
@@ -188,6 +233,66 @@ function getCalendarEntriesByDate(dateText) {
     }));
 
   return [...todoEntries, ...noteEntries];
+}
+
+function addEmptyMessage(listEl, message) {
+  const li = document.createElement('li');
+  li.textContent = message;
+  listEl.appendChild(li);
+}
+
+function renderSelectedDatePanel() {
+  const targetDate = state.selectedDate;
+  const labelFmt = new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'long',
+  });
+  selectedDateLabel.textContent = labelFmt.format(new Date(targetDate));
+
+  const createdTodos = sortByPriorityThenCreated(
+    state.todos.filter((todo) => isoDate(todo.createdAt) === targetDate),
+  );
+  const completedTodos = state.doneLog.filter((log) => isoDate(log.completedAt) === targetDate);
+  const notes = state.calendarItems.filter((item) => item.date === targetDate);
+
+  selectedDateSummary.textContent = `추가 ${createdTodos.length}건 · 완료 ${completedTodos.length}건 · 메모 ${notes.length}건`;
+
+  selectedCreatedList.innerHTML = '';
+  selectedCompletedList.innerHTML = '';
+  selectedCalendarNoteList.innerHTML = '';
+
+  if (createdTodos.length === 0) {
+    addEmptyMessage(selectedCreatedList, '해당 날짜에 추가된 체크리스트가 없습니다.');
+  } else {
+    createdTodos.forEach((todo) => {
+      const li = document.createElement('li');
+      li.textContent = `[${todo.bucket}] ${todo.title} · 생성 ${toDisplayDateTime(todo.createdAt)}`;
+      selectedCreatedList.appendChild(li);
+    });
+  }
+
+  if (completedTodos.length === 0) {
+    addEmptyMessage(selectedCompletedList, '해당 날짜에 완료한 체크리스트가 없습니다.');
+  } else {
+    completedTodos.forEach((log) => {
+      const dueDateText = log.dueDate ? ` · 일정 ${toDisplayDate(log.dueDate)}` : '';
+      const li = document.createElement('li');
+      li.textContent = `[${log.bucket}] ${log.title} · 완료 ${toDisplayDateTime(log.completedAt)}${dueDateText}`;
+      selectedCompletedList.appendChild(li);
+    });
+  }
+
+  if (notes.length === 0) {
+    addEmptyMessage(selectedCalendarNoteList, '해당 날짜의 별도 달력 내용이 없습니다.');
+  } else {
+    notes.forEach((item) => {
+      const li = document.createElement('li');
+      li.textContent = `[${typeLabel[item.type]}] ${item.text}`;
+      selectedCalendarNoteList.appendChild(li);
+    });
+  }
 }
 
 function renderCalendar() {
@@ -217,12 +322,22 @@ function renderCalendar() {
     }
 
     const currentDate = new Date(year, month, dayNumber);
-    const dateText = isoDate(currentDate);
+    const dateText = toLocalIsoDate(currentDate);
+
+    if (dateText === state.selectedDate) {
+      cell.classList.add('is-selected');
+    }
 
     const dayLabel = document.createElement('p');
     dayLabel.className = 'calendar-day';
     dayLabel.textContent = String(dayNumber);
     cell.appendChild(dayLabel);
+
+    const { scheduledCount, completedCount } = countDailyStats(dateText);
+    const dailySummary = document.createElement('p');
+    dailySummary.className = 'calendar-summary';
+    dailySummary.textContent = `일정 ${scheduledCount} · 완료 ${completedCount}`;
+    cell.appendChild(dailySummary);
 
     const entries = getCalendarEntriesByDate(dateText);
     if (entries.length === 0) {
@@ -234,7 +349,7 @@ function renderCalendar() {
       const list = document.createElement('ul');
       list.className = 'calendar-item-list';
 
-      entries.slice(0, 4).forEach((entry) => {
+      entries.slice(0, 3).forEach((entry) => {
         const li = document.createElement('li');
         li.className = `calendar-item ${entry.type === 'note' ? 'is-note' : 'is-todo'}`;
 
@@ -255,10 +370,11 @@ function renderCalendar() {
           removeBtn.className = 'calendar-remove';
           removeBtn.textContent = '✕';
           removeBtn.setAttribute('aria-label', '달력 항목 삭제');
-          removeBtn.addEventListener('click', () => {
+          removeBtn.addEventListener('click', (event) => {
+            event.stopPropagation();
             state.calendarItems = state.calendarItems.filter((item) => item.id !== entry.id);
             saveState();
-            renderCalendar();
+            render();
           });
           li.appendChild(removeBtn);
         }
@@ -266,15 +382,20 @@ function renderCalendar() {
         list.appendChild(li);
       });
 
-      if (entries.length > 4) {
+      if (entries.length > 3) {
         const more = document.createElement('li');
         more.className = 'calendar-more';
-        more.textContent = `+${entries.length - 4}개 더 있음`;
+        more.textContent = `+${entries.length - 3}개 더 있음`;
         list.appendChild(more);
       }
 
       cell.appendChild(list);
     }
+
+    cell.addEventListener('click', () => {
+      state.selectedDate = dateText;
+      render();
+    });
 
     calendarGrid.appendChild(cell);
   }
@@ -325,6 +446,7 @@ function renderWeeklyReport() {
 function render() {
   renderTodos();
   renderCalendar();
+  renderSelectedDatePanel();
   renderWeeklyReport();
 }
 
@@ -352,9 +474,11 @@ calendarForm.addEventListener('submit', (event) => {
   }
 
   state.calendarItems.unshift(createCalendarItem(date, calendarTypeSelect.value, text));
+  state.selectedDate = date;
+  state.currentMonth = new Date(new Date(date).getFullYear(), new Date(date).getMonth(), 1);
   saveState();
   calendarTextInput.value = '';
-  renderCalendar();
+  render();
 });
 
 prevMonthBtn.addEventListener('click', () => {

@@ -244,21 +244,34 @@ button {
 }
 
 .calendar-cell {
-  min-height: 120px;
+  min-height: 132px;
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 8px;
   background: #fcfcfd;
+  cursor: pointer;
+}
+
+.calendar-cell.is-selected {
+  border-color: #1570ef;
+  box-shadow: inset 0 0 0 1px #1570ef;
 }
 
 .calendar-cell.is-empty {
   background: #f9fafb;
+  cursor: default;
 }
 
 .calendar-day {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 13px;
   font-weight: 700;
+}
+
+.calendar-summary {
+  margin: 2px 0 6px;
+  font-size: 11px;
+  color: #175cd3;
 }
 
 .calendar-empty {
@@ -324,6 +337,38 @@ button {
   font-size: 12px;
 }
 
+.calendar-detail {
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.calendar-detail-head {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.calendar-detail-head h3 {
+  margin: 0;
+}
+
+.calendar-detail-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.calendar-detail-grid article {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+}
+
+.calendar-detail-grid h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
 .report {
   padding: 14px;
 }
@@ -366,7 +411,8 @@ button {
     grid-template-columns: 1fr auto auto;
   }
 
-  .calendar-form {
+  .calendar-form,
+  .calendar-detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -377,7 +423,8 @@ button {
 
 @media (max-width: 640px) {
   #quickAddForm,
-  .calendar-form {
+  .calendar-form,
+  .calendar-detail-grid {
     grid-template-columns: 1fr;
   }
 
