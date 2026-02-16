@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>day-check | 메인 화면</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <header class="topbar card">
+        <div>
+          <p class="eyebrow">DAY-CHECK</p>
+          <h1>오늘 해야 할 일</h1>
+          <p id="todayDate" class="muted"></p>
+        </div>
+        <button class="naver-btn" type="button">네이버 로그인</button>
+      </header>
+
+      <section class="quick-add card" aria-label="빠른 추가">
+        <form id="quickAddForm">
+          <input
+            id="quickInput"
+            type="text"
+            placeholder="할 일 입력 후 Enter (예: API 문서 정리)"
+            maxlength="120"
+            required
+          />
+          <select id="prioritySelect" aria-label="우선순위">
+            <option value="3">높음</option>
+            <option value="2" selected>보통</option>
+            <option value="1">낮음</option>
+          </select>
+          <select id="bucketSelect" aria-label="카테고리">
+            <option value="today">오늘</option>
+            <option value="project">프로젝트</option>
+            <option value="routine">일상</option>
+            <option value="inbox" selected>inbox</option>
+          </select>
+          <button type="submit">추가</button>
+        </form>
+      </section>
+
+      <section class="board">
+        <article class="card column" data-bucket="today">
+          <div class="column-head">
+            <h2>오늘</h2>
+            <span class="count" id="count-today">0</span>
+          </div>
+          <ul id="list-today" class="todo-list"></ul>
+        </article>
+
+        <article class="card column" data-bucket="project">
+          <div class="column-head">
+            <h2>프로젝트</h2>
+            <span class="count" id="count-project">0</span>
+          </div>
+          <ul id="list-project" class="todo-list"></ul>
+        </article>
+
+        <article class="card column" data-bucket="routine">
+          <div class="column-head">
+            <h2>일상</h2>
+            <span class="count" id="count-routine">0</span>
+          </div>
+          <ul id="list-routine" class="todo-list"></ul>
+        </article>
+
+        <article class="card column" data-bucket="inbox">
+          <div class="column-head">
+            <h2>inbox</h2>
+            <span class="count" id="count-inbox">0</span>
+          </div>
+          <ul id="list-inbox" class="todo-list"></ul>
+        </article>
+      </section>
+
+      <section class="card report" aria-label="주간 리포트">
+        <div class="report-head">
+          <h2>이번 주 리포트</h2>
+          <p id="weekRange" class="muted"></p>
+        </div>
+        <div class="report-grid">
+          <article>
+            <h3>이번 주 완료(지운 일)</h3>
+            <p id="weeklyDoneCount" class="muted"></p>
+            <ul id="weeklyDoneList" class="report-list"></ul>
+          </article>
+          <article>
+            <h3>아직 남은 일</h3>
+            <p id="weeklyPendingCount" class="muted"></p>
+            <ul id="weeklyPendingList" class="report-list"></ul>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <template id="todoItemTemplate">
+      <li class="todo-item">
+        <div class="todo-main">
+          <span class="title"></span>
+          <span class="meta"></span>
+        </div>
+        <div class="actions">
+          <button class="complete" type="button">완료(지우기)</button>
+          <button class="delete" type="button" aria-label="삭제">삭제</button>
+        </div>
+      </li>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
