@@ -11,12 +11,59 @@
       <header class="topbar card">
         <div>
           <p class="eyebrow">DAY-CHECK</p>
+          <h1>투두 한창</h1>
           <h1>오늘 해야 할 일</h1>
           <p id="todayDate" class="muted"></p>
         </div>
         <button class="naver-btn" type="button">네이버 로그인</button>
       </header>
 
+      <section class="todo-panel card" aria-label="투두 작성">
+        <div class="panel-head">
+          <h2>내가 할 일 쭉쭉 입력</h2>
+          <p class="muted">여러 줄 입력 가능 (줄바꿈마다 할 일 1개)</p>
+        </div>
+
+        <form id="todoComposer" class="todo-composer">
+          <textarea
+            id="todoTextarea"
+            rows="5"
+            maxlength="2000"
+            placeholder="예)\n클라이언트A 기획안 검토\n팀 미팅 아젠다 정리\n세금 자료 업로드"
+            required
+          ></textarea>
+
+          <div class="composer-row">
+            <input id="composerDate" type="date" aria-label="할 일 날짜" />
+            <select id="composerPriority" aria-label="우선순위">
+              <option value="3">높음</option>
+              <option value="2" selected>보통</option>
+              <option value="1">낮음</option>
+            </select>
+            <select id="composerCategory" aria-label="분류"></select>
+            <button id="openCategoryInlineBtn" type="button">+ 분류 추가</button>
+            <button type="submit">할 일 저장</button>
+          </div>
+
+          <div id="inlineCategoryCreate" class="inline-category-create hidden" aria-label="분류 추가">
+            <input
+              id="newCategoryInput"
+              type="text"
+              maxlength="40"
+              placeholder="새 분류명 입력 (예: 클라이언트A)"
+            />
+            <button id="createCategoryBtn" type="button">추가</button>
+            <button id="cancelCategoryBtn" type="button">취소</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="todo-list-panel card" aria-label="할 일 목록">
+        <div class="panel-head">
+          <h2>전체 투두</h2>
+          <span id="todoCount" class="count">0</span>
+        </div>
+        <ul id="todoList" class="todo-list"></ul>
       <section class="quick-add card" aria-label="빠른 추가">
         <form id="quickAddForm">
           <input
@@ -92,6 +139,7 @@
             <option value="note">별도 메모</option>
             <option value="todo">체크리스트</option>
           </select>
+          <input id="calendarTextInput" type="text" maxlength="140" placeholder="달력에 표시할 내용" required />
           <input
             id="calendarTextInput"
             type="text"
@@ -155,6 +203,9 @@
           <span class="title"></span>
           <span class="meta"></span>
         </div>
+        <div class="todo-controls">
+          <select class="todo-category-select" aria-label="할 일 분류"></select>
+          <button class="complete" type="button">완료</button>
         <div class="actions">
           <button class="complete" type="button">완료(지우기)</button>
           <button class="delete" type="button" aria-label="삭제">삭제</button>

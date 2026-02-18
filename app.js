@@ -1,3 +1,9 @@
+const TODO_STORAGE_KEY = 'day-check.main.todos.v4';
+const DONE_STORAGE_KEY = 'day-check.main.doneLog.v1';
+const CALENDAR_STORAGE_KEY = 'day-check.main.calendarItems.v1';
+const CATEGORY_STORAGE_KEY = 'day-check.main.categories.v1';
+
+const LEGACY_TODO_KEYS = ['day-check.main.todos.v3', 'day-check.main.todos.v2'];
 const TODO_STORAGE_KEY = 'day-check.main.todos.v2';
 const DONE_STORAGE_KEY = 'day-check.main.doneLog.v1';
 const CALENDAR_STORAGE_KEY = 'day-check.main.calendarItems.v1';
@@ -13,6 +19,13 @@ const typeLabel = {
   note: '메모',
 };
 
+const defaultCategories = [{ id: 'uncategorized', name: '미분류' }];
+
+const state = {
+  todos: loadTodos(),
+  doneLog: loadState(DONE_STORAGE_KEY),
+  calendarItems: loadState(CALENDAR_STORAGE_KEY),
+  categories: loadCategories(),
 const state = {
   todos: loadState(TODO_STORAGE_KEY),
   doneLog: loadState(DONE_STORAGE_KEY),
@@ -22,6 +35,23 @@ const state = {
 };
 
 const dateEl = document.getElementById('todayDate');
+const todoCountEl = document.getElementById('todoCount');
+const todoListEl = document.getElementById('todoList');
+const todoTemplate = document.getElementById('todoItemTemplate');
+
+const todoComposer = document.getElementById('todoComposer');
+const todoTextarea = document.getElementById('todoTextarea');
+const composerDate = document.getElementById('composerDate');
+const composerPriority = document.getElementById('composerPriority');
+const composerCategory = document.getElementById('composerCategory');
+
+const openCategoryInlineBtn = document.getElementById('openCategoryInlineBtn');
+const inlineCategoryCreate = document.getElementById('inlineCategoryCreate');
+const newCategoryInput = document.getElementById('newCategoryInput');
+const createCategoryBtn = document.getElementById('createCategoryBtn');
+const cancelCategoryBtn = document.getElementById('cancelCategoryBtn');
+
+const weekRangeEl = document.getElementById('weekRange');
 const weekRangeEl = document.getElementById('weekRange');
 const form = document.getElementById('quickAddForm');
 const input = document.getElementById('quickInput');
@@ -56,10 +86,52 @@ function loadState(key) {
   }
 }
 
+function loadCategories() {
+  const categories = loadState(CATEGORY_STORAGE_KEY);
+  if (categories.length === 0) {
+    return defaultCategories;
+  }
+  return categories;
+}
+
+function loadTodos() {
+  const current = loadState(TODO_STORAGE_KEY);
+  if (current.length > 0) {
+    return current;
+  }
+
+  for (const key of LEGACY_TODO_KEYS) {
+    const legacy = loadState(key);
+    if (legacy.length > 0) {
+      return legacy.map((todo) => ({
+        id: todo.id || crypto.randomUUID(),
+        title: todo.title || '',
+        categoryId: todo.categoryId || todo.bucketId || todo.bucket || 'uncategorized',
+        dueDate: todo.dueDate || '',
+        priority: Number(todo.priority || 2),
+        createdAt: todo.createdAt || new Date().toISOString(),
+      }));
+    }
+  }
+
+  return [];
+}
+
 function saveState() {
   localStorage.setItem(TODO_STORAGE_KEY, JSON.stringify(state.todos));
   localStorage.setItem(DONE_STORAGE_KEY, JSON.stringify(state.doneLog));
   localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(state.calendarItems));
+  localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(state.categories));
+}
+
+function toLocalIsoDate(date) {
+  const d = new Date(date);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+}
+
+function isoDate(isoText) {
+  return isoText.slice(0, 10);
 }
 
 function formatToday() {
@@ -130,6 +202,47 @@ function inCurrentWeek(isoDateText) {
   return target >= start && target <= end;
 }
 
+function ensureCategoryIntegrity() {
+  if (state.categories.length === 0) {
+    state.categories = [...defaultCategories];
+  }
+
+  if (!state.categories.some((item) => item.id === 'uncategorized')) {
+    state.categories.unshift({ id: 'uncategorized', name: '미분류' });
+  }
+
+  const ids = new Set(state.categories.map((item) => item.id));
+  state.todos = state.todos.map((todo) => ({
+    ...todo,
+    categoryId: ids.has(todo.categoryId) ? todo.categoryId : 'uncategorized',
+  }));
+}
+
+function getCategoryName(categoryId) {
+  const category = state.categories.find((item) => item.id === categoryId);
+  return category ? category.name : '미분류';
+}
+
+function renderCategoryOptions(selectEl, selectedId) {
+  selectEl.innerHTML = '';
+  state.categories.forEach((category) => {
+    const option = document.createElement('option');
+    option.value = category.id;
+    option.textContent = category.name;
+    if (category.id === selectedId) {
+      option.selected = true;
+    }
+    selectEl.appendChild(option);
+  });
+}
+
+function createTodo(title, categoryId, dueDate, priority) {
+  return {
+    id: crypto.randomUUID(),
+    title,
+    categoryId,
+    dueDate: dueDate || '',
+    priority: Number(priority),
 function createTodo(title, bucket, priority, dueDate) {
   return {
     id: crypto.randomUUID(),
@@ -158,6 +271,90 @@ function sortByPriorityThenCreated(list) {
     }
     return new Date(a.createdAt) - new Date(b.createdAt);
   });
+}
+
+function renderTodoComposer() {
+  renderCategoryOptions(composerCategory, composerCategory.value || 'uncategorized');
+}
+
+function renderTodoList() {
+  const sorted = sortByPriorityThenCreated(state.todos);
+  todoCountEl.textContent = String(sorted.length);
+  todoListEl.innerHTML = '';
+
+  sorted.forEach((todo) => {
+    const item = todoTemplate.content.firstElementChild.cloneNode(true);
+    const titleEl = item.querySelector('.title');
+    const metaEl = item.querySelector('.meta');
+    const categorySelect = item.querySelector('.todo-category-select');
+    const completeBtn = item.querySelector('.complete');
+    const deleteBtn = item.querySelector('.delete');
+
+    titleEl.textContent = todo.title;
+    const dateText = todo.dueDate ? ` · 일정: ${todo.dueDate}` : '';
+    metaEl.textContent = `우선순위: ${priorityLabel[todo.priority] || '보통'}${dateText}`;
+
+    renderCategoryOptions(categorySelect, todo.categoryId);
+    categorySelect.addEventListener('change', () => {
+      todo.categoryId = categorySelect.value;
+      saveState();
+      render();
+    });
+
+    completeBtn.addEventListener('click', () => {
+      state.doneLog.unshift({
+        id: todo.id,
+        title: todo.title,
+        categoryId: todo.categoryId,
+        priority: todo.priority,
+        dueDate: todo.dueDate,
+        createdAt: todo.createdAt,
+        completedAt: new Date().toISOString(),
+      });
+      state.todos = state.todos.filter((t) => t.id !== todo.id);
+      saveState();
+      render();
+    });
+
+    deleteBtn.addEventListener('click', () => {
+      state.todos = state.todos.filter((t) => t.id !== todo.id);
+      saveState();
+      render();
+    });
+
+    todoListEl.appendChild(item);
+  });
+}
+
+function toggleInlineCategory(show) {
+  inlineCategoryCreate.classList.toggle('hidden', !show);
+  if (show) {
+    newCategoryInput.focus();
+  }
+}
+
+function createCategoryFromInput() {
+  const name = newCategoryInput.value.trim();
+  if (!name) {
+    return;
+  }
+
+  const exists = state.categories.some((item) => item.name === name);
+  if (exists) {
+    const matched = state.categories.find((item) => item.name === name);
+    composerCategory.value = matched.id;
+    newCategoryInput.value = '';
+    toggleInlineCategory(false);
+    return;
+  }
+
+  const category = { id: crypto.randomUUID(), name };
+  state.categories.push(category);
+  saveState();
+  render();
+  composerCategory.value = category.id;
+  newCategoryInput.value = '';
+  toggleInlineCategory(false);
 }
 
 function renderTodos() {
@@ -219,6 +416,7 @@ function getCalendarEntriesByDate(dateText) {
     .map((todo) => ({
       id: todo.id,
       type: 'todo',
+      text: `${todo.title} (${getCategoryName(todo.categoryId)})`,
       text: todo.title,
       source: 'todo',
     }));
@@ -251,6 +449,7 @@ function renderSelectedDatePanel() {
   });
   selectedDateLabel.textContent = labelFmt.format(new Date(targetDate));
 
+  const createdTodos = sortByPriorityThenCreated(state.todos.filter((todo) => isoDate(todo.createdAt) === targetDate));
   const createdTodos = sortByPriorityThenCreated(
     state.todos.filter((todo) => isoDate(todo.createdAt) === targetDate),
   );
@@ -268,6 +467,7 @@ function renderSelectedDatePanel() {
   } else {
     createdTodos.forEach((todo) => {
       const li = document.createElement('li');
+      li.textContent = `[${getCategoryName(todo.categoryId)}] ${todo.title} · 생성 ${toDisplayDateTime(todo.createdAt)}`;
       li.textContent = `[${todo.bucket}] ${todo.title} · 생성 ${toDisplayDateTime(todo.createdAt)}`;
       selectedCreatedList.appendChild(li);
     });
@@ -279,6 +479,7 @@ function renderSelectedDatePanel() {
     completedTodos.forEach((log) => {
       const dueDateText = log.dueDate ? ` · 일정 ${toDisplayDate(log.dueDate)}` : '';
       const li = document.createElement('li');
+      li.textContent = `[${getCategoryName(log.categoryId)}] ${log.title} · 완료 ${toDisplayDateTime(log.completedAt)}${dueDateText}`;
       li.textContent = `[${log.bucket}] ${log.title} · 완료 ${toDisplayDateTime(log.completedAt)}${dueDateText}`;
       selectedCompletedList.appendChild(li);
     });
@@ -427,6 +628,7 @@ function renderWeeklyReport() {
   } else {
     doneThisWeek.slice(0, 12).forEach((item) => {
       const li = document.createElement('li');
+      li.textContent = `[${getCategoryName(item.categoryId)}] ${item.title}`;
       li.textContent = `[${item.bucket}] ${item.title}`;
       doneListEl.appendChild(li);
     });
@@ -437,6 +639,7 @@ function renderWeeklyReport() {
   } else {
     pendingNow.slice(0, 12).forEach((item) => {
       const li = document.createElement('li');
+      li.textContent = `[${getCategoryName(item.categoryId)}] ${item.title} (${priorityLabel[item.priority]})`;
       li.textContent = `[${item.bucket}] ${item.title} (${priorityLabel[item.priority]})`;
       pendingListEl.appendChild(li);
     });
@@ -444,11 +647,56 @@ function renderWeeklyReport() {
 }
 
 function render() {
+  renderTodoComposer();
+  renderTodoList();
   renderTodos();
   renderCalendar();
   renderSelectedDatePanel();
   renderWeeklyReport();
 }
+
+todoComposer.addEventListener('submit', (event) => {
+  event.preventDefault();
+
+  const lines = todoTextarea.value
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return;
+  }
+
+  lines.forEach((title) => {
+    state.todos.unshift(
+      createTodo(title, composerCategory.value || 'uncategorized', composerDate.value, Number(composerPriority.value)),
+    );
+  });
+
+  saveState();
+  todoTextarea.value = '';
+  composerDate.value = '';
+  composerPriority.value = '2';
+  todoTextarea.focus();
+  render();
+});
+
+openCategoryInlineBtn.addEventListener('click', () => {
+  toggleInlineCategory(inlineCategoryCreate.classList.contains('hidden'));
+});
+
+cancelCategoryBtn.addEventListener('click', () => {
+  newCategoryInput.value = '';
+  toggleInlineCategory(false);
+});
+
+createCategoryBtn.addEventListener('click', createCategoryFromInput);
+newCategoryInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    createCategoryFromInput();
+  }
+});
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -491,5 +739,8 @@ nextMonthBtn.addEventListener('click', () => {
   renderCalendar();
 });
 
+ensureCategoryIntegrity();
+formatToday();
+saveState();
 formatToday();
 render();
