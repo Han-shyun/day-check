@@ -4,6 +4,9 @@ const CALENDAR_STORAGE_KEY = 'day-check.main.calendarItems.v1';
 const CATEGORY_STORAGE_KEY = 'day-check.main.categories.v1';
 
 const LEGACY_TODO_KEYS = ['day-check.main.todos.v3', 'day-check.main.todos.v2'];
+const TODO_STORAGE_KEY = 'day-check.main.todos.v2';
+const DONE_STORAGE_KEY = 'day-check.main.doneLog.v1';
+const CALENDAR_STORAGE_KEY = 'day-check.main.calendarItems.v1';
 
 const priorityLabel = {
   3: '높음',
@@ -23,6 +26,10 @@ const state = {
   doneLog: loadState(DONE_STORAGE_KEY),
   calendarItems: loadState(CALENDAR_STORAGE_KEY),
   categories: loadCategories(),
+const state = {
+  todos: loadState(TODO_STORAGE_KEY),
+  doneLog: loadState(DONE_STORAGE_KEY),
+  calendarItems: loadState(CALENDAR_STORAGE_KEY),
   currentMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   selectedDate: toLocalIsoDate(new Date()),
 };
@@ -45,6 +52,14 @@ const createCategoryBtn = document.getElementById('createCategoryBtn');
 const cancelCategoryBtn = document.getElementById('cancelCategoryBtn');
 
 const weekRangeEl = document.getElementById('weekRange');
+const weekRangeEl = document.getElementById('weekRange');
+const form = document.getElementById('quickAddForm');
+const input = document.getElementById('quickInput');
+const dueDateInput = document.getElementById('dueDateInput');
+const bucketSelect = document.getElementById('bucketSelect');
+const prioritySelect = document.getElementById('prioritySelect');
+const template = document.getElementById('todoItemTemplate');
+
 const calendarForm = document.getElementById('calendarForm');
 const calendarDateInput = document.getElementById('calendarDateInput');
 const calendarTypeSelect = document.getElementById('calendarTypeSelect');
@@ -59,6 +74,8 @@ const selectedDateSummary = document.getElementById('selectedDateSummary');
 const selectedCreatedList = document.getElementById('selectedCreatedList');
 const selectedCompletedList = document.getElementById('selectedCompletedList');
 const selectedCalendarNoteList = document.getElementById('selectedCalendarNoteList');
+
+const buckets = ['today', 'project', 'routine', 'inbox'];
 
 function loadState(key) {
   try {
@@ -126,6 +143,16 @@ function formatToday() {
     weekday: 'long',
   });
   dateEl.textContent = fmt.format(now);
+}
+
+function toLocalIsoDate(date) {
+  const d = new Date(date);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  return d.toISOString().slice(0, 10);
+}
+
+function isoDate(isoText) {
+  return isoText.slice(0, 10);
 }
 
 function toDisplayDate(isoText) {
@@ -216,6 +243,13 @@ function createTodo(title, categoryId, dueDate, priority) {
     categoryId,
     dueDate: dueDate || '',
     priority: Number(priority),
+function createTodo(title, bucket, priority, dueDate) {
+  return {
+    id: crypto.randomUUID(),
+    title,
+    bucket,
+    priority: Number(priority),
+    dueDate: dueDate || '',
     createdAt: new Date().toISOString(),
   };
 }
@@ -323,6 +357,53 @@ function createCategoryFromInput() {
   toggleInlineCategory(false);
 }
 
+function renderTodos() {
+  for (const bucket of buckets) {
+    const listEl = document.getElementById(`list-${bucket}`);
+    const countEl = document.getElementById(`count-${bucket}`);
+    listEl.innerHTML = '';
+
+    const filtered = state.todos.filter((todo) => todo.bucket === bucket);
+    const sorted = sortByPriorityThenCreated(filtered);
+    countEl.textContent = String(sorted.length);
+
+    sorted.forEach((todo) => {
+      const item = template.content.firstElementChild.cloneNode(true);
+      const titleEl = item.querySelector('.title');
+      const metaEl = item.querySelector('.meta');
+      const completeBtn = item.querySelector('.complete');
+      const deleteBtn = item.querySelector('.delete');
+
+      titleEl.textContent = todo.title;
+      const dateText = todo.dueDate ? ` · 일정: ${todo.dueDate}` : '';
+      metaEl.textContent = `우선순위: ${priorityLabel[todo.priority] || '보통'}${dateText}`;
+
+      completeBtn.addEventListener('click', () => {
+        state.doneLog.unshift({
+          id: todo.id,
+          title: todo.title,
+          bucket: todo.bucket,
+          priority: todo.priority,
+          dueDate: todo.dueDate || '',
+          createdAt: todo.createdAt,
+          completedAt: new Date().toISOString(),
+        });
+        state.todos = state.todos.filter((t) => t.id !== todo.id);
+        saveState();
+        render();
+      });
+
+      deleteBtn.addEventListener('click', () => {
+        state.todos = state.todos.filter((t) => t.id !== todo.id);
+        saveState();
+        render();
+      });
+
+      listEl.appendChild(item);
+    });
+  }
+}
+
 function countDailyStats(dateText) {
   const scheduledCount = state.todos.filter((todo) => todo.dueDate === dateText).length;
   const completedCount = state.doneLog.filter((log) => isoDate(log.completedAt) === dateText).length;
@@ -336,6 +417,7 @@ function getCalendarEntriesByDate(dateText) {
       id: todo.id,
       type: 'todo',
       text: `${todo.title} (${getCategoryName(todo.categoryId)})`,
+      text: todo.title,
       source: 'todo',
     }));
 
@@ -368,6 +450,9 @@ function renderSelectedDatePanel() {
   selectedDateLabel.textContent = labelFmt.format(new Date(targetDate));
 
   const createdTodos = sortByPriorityThenCreated(state.todos.filter((todo) => isoDate(todo.createdAt) === targetDate));
+  const createdTodos = sortByPriorityThenCreated(
+    state.todos.filter((todo) => isoDate(todo.createdAt) === targetDate),
+  );
   const completedTodos = state.doneLog.filter((log) => isoDate(log.completedAt) === targetDate);
   const notes = state.calendarItems.filter((item) => item.date === targetDate);
 
@@ -383,6 +468,7 @@ function renderSelectedDatePanel() {
     createdTodos.forEach((todo) => {
       const li = document.createElement('li');
       li.textContent = `[${getCategoryName(todo.categoryId)}] ${todo.title} · 생성 ${toDisplayDateTime(todo.createdAt)}`;
+      li.textContent = `[${todo.bucket}] ${todo.title} · 생성 ${toDisplayDateTime(todo.createdAt)}`;
       selectedCreatedList.appendChild(li);
     });
   }
@@ -394,6 +480,7 @@ function renderSelectedDatePanel() {
       const dueDateText = log.dueDate ? ` · 일정 ${toDisplayDate(log.dueDate)}` : '';
       const li = document.createElement('li');
       li.textContent = `[${getCategoryName(log.categoryId)}] ${log.title} · 완료 ${toDisplayDateTime(log.completedAt)}${dueDateText}`;
+      li.textContent = `[${log.bucket}] ${log.title} · 완료 ${toDisplayDateTime(log.completedAt)}${dueDateText}`;
       selectedCompletedList.appendChild(li);
     });
   }
@@ -542,6 +629,7 @@ function renderWeeklyReport() {
     doneThisWeek.slice(0, 12).forEach((item) => {
       const li = document.createElement('li');
       li.textContent = `[${getCategoryName(item.categoryId)}] ${item.title}`;
+      li.textContent = `[${item.bucket}] ${item.title}`;
       doneListEl.appendChild(li);
     });
   }
@@ -552,6 +640,7 @@ function renderWeeklyReport() {
     pendingNow.slice(0, 12).forEach((item) => {
       const li = document.createElement('li');
       li.textContent = `[${getCategoryName(item.categoryId)}] ${item.title} (${priorityLabel[item.priority]})`;
+      li.textContent = `[${item.bucket}] ${item.title} (${priorityLabel[item.priority]})`;
       pendingListEl.appendChild(li);
     });
   }
@@ -560,6 +649,7 @@ function renderWeeklyReport() {
 function render() {
   renderTodoComposer();
   renderTodoList();
+  renderTodos();
   renderCalendar();
   renderSelectedDatePanel();
   renderWeeklyReport();
@@ -608,6 +698,21 @@ newCategoryInput.addEventListener('keydown', (event) => {
   }
 });
 
+form.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const title = input.value.trim();
+  if (!title) {
+    return;
+  }
+
+  state.todos.unshift(createTodo(title, bucketSelect.value, prioritySelect.value, dueDateInput.value));
+  saveState();
+  input.value = '';
+  dueDateInput.value = '';
+  input.focus();
+  render();
+});
+
 calendarForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const text = calendarTextInput.value.trim();
@@ -637,4 +742,5 @@ nextMonthBtn.addEventListener('click', () => {
 ensureCategoryIntegrity();
 formatToday();
 saveState();
+formatToday();
 render();
