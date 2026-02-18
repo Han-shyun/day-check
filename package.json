@@ -1,0 +1,25 @@
+﻿{
+    "name":  "day-check",
+    "version":  "1.0.0",
+    "private":  true,
+    "type":  "commonjs",
+    "scripts":  {
+                    "start":       "node server.js",
+                    "dev":         "vite",
+                    "dev:server":  "node --watch server.js",
+                    "build":       "vite build",
+                    "preview":     "vite preview --port 4173"
+                },
+    "dependencies":  {
+                         "cookie-parser":  "^1.4.6",
+                         "express":  "^4.19.2",
+                         "express-rate-limit":  "^7.5.0",
+                         "helmet":  "^8.0.0",
+                         "sqlite3":  "^5.1.7",
+                         "dotenv":  "^16.4.7"
+                     },
+    "devDependencies":  {
+                           "vite": "^6.0.0"
+                     }
+}
+

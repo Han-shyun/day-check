@@ -81,3 +81,28 @@ https://yourname.github.io/day-check/
 6. 달력에서 날짜를 누르면 그날 **추가/완료/메모 내역**을 내용창에서 확인
 7. 다음날에는 지운 항목 제외하고 남은 체크리스트 유지
 8. 이번 주에 한 일/못 한 일을 하단 리포트에서 확인
+
+
+## 서버 연동 실행 방법
+1. npm install
+2. .env 파일에 NAVER_CLIENT_ID, NAVER_CLIENT_SECRET 등록
+3. npm run start
+4. 브라우저에서 http://localhost:4173 접속
+
+## 환경변수
+- NAVER_CLIENT_ID: 네이버 앱 client_id
+- NAVER_CLIENT_SECRET: 네이버 앱 client_secret
+- NAVER_REDIRECT_URI: 네이버 콜백 URL (미설정시 요청 호스트 기반 자동 생성)
+- SESSION_SECRET: 세션 고정 키(현재 구현은 메모리 세션)
+- DATABASE_PATH: DB 경로(기본: daycheck.sqlite)
+- DATABASE_URL/FRONTEND_BASE_URL는 추후 확장용
+
+## 보안 반영 요약 (2026-02-18)
+- OAuth `state` 검증 + 콜백 불일치 거부
+- 서버 사이드 토큰 교환(`client_secret`은 서버 환경변수)
+- 세션 쿠키 서명 검증(HMAC)
+- CSRF 보호(`x-csrf-token` + CSRF 쿠키)
+- 인증 라우트 레이트리밋
+- 운영 환경 HTTPS 강제 (`NODE_ENV=production`)
+- 사용자별 상태 저장 API: `GET /api/state`, `PUT /api/state`
+- OAuth 시작 URL: `GET /api/auth/naver` 또는 `GET /api/auth/naver/login`
