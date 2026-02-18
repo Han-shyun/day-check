@@ -2,8 +2,16 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#03c75a" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="day-check" />
     <title>day-check</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
+    <link rel="stylesheet" href="/src/style.css?v=naver-theme" />
   </head>
   <body>
     <main class="layout">
@@ -11,12 +19,15 @@
         <div>
           <p class="eyebrow">DAY-CHECK</p>
           <h1>데일리 체크</h1>
-          <p class="hero-copy">오늘 할 일은 한 번 정리하고, 한 번에 끝내는 UI로 완성하세요.</p>
+          <p class="hero-copy">오늘 할 일을 정리하고, 칸 배치를 직접 조작하세요.</p>
           <p id="todayDate" class="muted"></p>
         </div>
         <div class="auth-area">
           <p id="authStatus" class="muted">로컬 모드</p>
-          <button id="authBtn" class="naver-btn" type="button">네이버 로그인</button>
+          <button id="authBtn" class="kakao-btn" type="button">
+            <span class="kakao-logo" aria-hidden="true">K</span>
+            <span>카카오 로그인</span>
+          </button>
         </div>
       </header>
 
@@ -31,7 +42,7 @@
             id="todoTextarea"
             rows="5"
             maxlength="2000"
-            placeholder="예) 오늘 회의 정리하기\n내일 보고서 초안 작성하기"
+            placeholder="예) 오늘 회의 정리하기&#10;내일 보고서 초안 작성하기"
             required
           ></textarea>
 
@@ -55,7 +66,7 @@
         </form>
       </section>
 
-      <section class="todo-list-panel card" aria-label="최근 할 일">
+      <section class="todo-list-panel card" aria-label="할 일 목록">
         <div class="panel-head">
           <h2>할 일 목록</h2>
           <span id="todoCount" class="count">0</span>
@@ -64,84 +75,153 @@
       </section>
 
       <section class="quick-add card" aria-label="빠른 입력">
-        <form id="quickAddForm">
-          <input id="quickInput" type="text" placeholder="한 줄 할 일 입력 후 Enter" maxlength="120" required />
-          <input id="dueDateInput" type="date" aria-label="빠른 마감일" />
-          <select id="prioritySelect" aria-label="우선순위">
-            <option value="3">낮음</option>
-            <option value="2" selected>보통</option>
-            <option value="1">높음</option>
-          </select>
-          <select id="bucketSelect" aria-label="버킷 선택">
-            <option value="today">오늘</option>
-            <option value="project">프로젝트</option>
-            <option value="routine">루틴</option>
-            <option value="inbox" selected>inbox</option>
-          </select>
-          <button type="submit">추가</button>
-        </form>
+        <div class="quick-add-head panel-head">
+          <h2>빠른 입력</h2>
+          <button
+            id="toggleQuickAddBtn"
+            type="button"
+            class="ghost-btn"
+            aria-expanded="false"
+            aria-controls="quickAddForm"
+          >
+            펼치기
+          </button>
+        </div>
+        <p class="muted quick-add-hint">한 줄로 빠르게 등록하고 바로 실행할 때 사용합니다.</p>
+        <div id="quickAddBody" class="quick-add-body hidden">
+          <form id="quickAddForm">
+            <input id="quickInput" type="text" placeholder="한 줄 할 일 입력 후 Enter" maxlength="120" required />
+            <input id="dueDateInput" type="date" aria-label="할 일 마감일" />
+            <select id="prioritySelect" aria-label="우선순위">
+              <option value="3">낮음</option>
+              <option value="2" selected>보통</option>
+              <option value="1">높음</option>
+            </select>
+            <select id="bucketSelect" aria-label="버킷 선택">
+              <option value="today">오늘</option>
+              <option value="project">프로젝트</option>
+              <option value="routine">루틴</option>
+              <option value="inbox" selected>inbox</option>
+            </select>
+            <button type="submit">추가</button>
+          </form>
+        </div>
       </section>
 
       <section class="board">
         <article class="card column" data-bucket="today">
           <div class="column-head">
-            <h2>오늘</h2>
-            <span class="count" id="count-today">0</span>
+            <h2 id="bucket-title-today" class="bucket-title" contenteditable="true" role="textbox" data-bucket="today">
+              오늘
+            </h2>
+            <div class="column-head-actions">
+              <button class="column-drag-handle" type="button" aria-label="오늘 칼럼 드래그 이동">≡</button>
+              <span class="count" id="count-today">0</span>
+            </div>
           </div>
           <ul id="list-today" class="todo-list"></ul>
         </article>
 
         <article class="card column" data-bucket="project">
           <div class="column-head">
-            <h2>프로젝트</h2>
-            <span class="count" id="count-project">0</span>
+            <h2
+              id="bucket-title-project"
+              class="bucket-title"
+              contenteditable="true"
+              role="textbox"
+              data-bucket="project"
+            >
+              프로젝트
+            </h2>
+            <div class="column-head-actions">
+              <button class="column-drag-handle" type="button" aria-label="프로젝트 칼럼 드래그 이동">≡</button>
+              <button
+                id="removeProjectColumnBtn"
+                class="column-remove-btn"
+                type="button"
+                aria-label="프로젝트 칼럼 제거"
+              >
+                제거
+              </button>
+              <span class="count" id="count-project">0</span>
+            </div>
           </div>
           <ul id="list-project" class="todo-list"></ul>
         </article>
 
         <article class="card column" data-bucket="routine">
           <div class="column-head">
-            <h2>루틴</h2>
-            <span class="count" id="count-routine">0</span>
+            <h2
+              id="bucket-title-routine"
+              class="bucket-title"
+              contenteditable="true"
+              role="textbox"
+              data-bucket="routine"
+            >
+              루틴
+            </h2>
+            <div class="column-head-actions">
+              <button class="column-drag-handle" type="button" aria-label="루틴 칼럼 드래그 이동">≡</button>
+              <span class="count" id="count-routine">0</span>
+            </div>
           </div>
           <ul id="list-routine" class="todo-list"></ul>
         </article>
 
         <article class="card column" data-bucket="inbox">
           <div class="column-head">
-            <h2>inbox</h2>
-            <span class="count" id="count-inbox">0</span>
+            <h2 id="bucket-title-inbox" class="bucket-title" contenteditable="true" role="textbox" data-bucket="inbox">
+              inbox
+            </h2>
+            <div class="column-head-actions">
+              <button class="column-drag-handle" type="button" aria-label="inbox 칼럼 드래그 이동">≡</button>
+              <span class="count" id="count-inbox">0</span>
+            </div>
           </div>
           <ul id="list-inbox" class="todo-list"></ul>
         </article>
       </section>
 
-      <section class="card calendar" aria-label="캘린더">
+      <div class="board-controls">
+        <button id="addProjectColumnBtn" class="project-add-btn hidden" type="button">+ 프로젝트 칼럼 추가</button>
+      </div>
+
+      <section class="card calendar" aria-label="달력">
         <div class="calendar-head">
-          <h2>캘린더</h2>
+          <h2>달력</h2>
           <div class="calendar-nav">
-            <button id="prevMonthBtn" type="button">◀ 이전</button>
+            <button id="prevMonthBtn" type="button">이전 달</button>
             <p id="calendarMonthLabel" class="muted"></p>
-            <button id="nextMonthBtn" type="button">다음 ▶</button>
+            <button id="nextMonthBtn" type="button">다음 달</button>
           </div>
         </div>
 
-        <form id="calendarForm" class="calendar-form">
+        <form id="calendarForm" class="calendar-form hidden">
           <input id="calendarDateInput" type="date" required aria-label="캘린더 날짜" />
           <select id="calendarTypeSelect" aria-label="캘린더 항목 유형">
-            <option value="note">노트</option>
+            <option value="note">메모</option>
             <option value="todo">할 일</option>
           </select>
-          <input id="calendarTextInput" type="text" maxlength="140" placeholder="메모 입력" required />
-          <button type="submit">등록</button>
+          <input id="calendarTextInput" type="text" maxlength="140" placeholder="메모 입력" />
+          <div id="calendarTodoFields" class="calendar-mode-fields hidden">
+            <input id="calendarTodoTitleInput" type="text" maxlength="120" placeholder="할 일 제목" />
+            <textarea
+              id="calendarTodoDetailInput"
+              rows="3"
+              maxlength="1200"
+              placeholder="할 일 상세 내용"
+              aria-label="할 일 상세 내용"
+            ></textarea>
+          </div>
+          <button type="submit">추가</button>
         </form>
 
         <div class="calendar-weekdays" aria-hidden="true">
-          <span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span><span>일</span>
+          <span>일</span><span>월</span><span>화</span><span>수</span><span>목</span><span>금</span><span>토</span>
         </div>
         <div id="calendarGrid" class="calendar-grid"></div>
 
-        <aside class="calendar-detail card" aria-label="선택된 날짜 상세">
+        <aside class="calendar-detail card" aria-label="선택한 날짜 상세">
           <div class="calendar-detail-head">
             <h3 id="selectedDateLabel">날짜</h3>
             <p id="selectedDateSummary" class="muted"></p>
@@ -175,7 +255,7 @@
             <ul id="weeklyDoneList" class="report-list"></ul>
           </article>
           <article>
-            <h3>대기</h3>
+            <h3>미완료</h3>
             <p id="weeklyPendingCount" class="muted"></p>
             <ul id="weeklyPendingList" class="report-list"></ul>
           </article>
@@ -188,6 +268,13 @@
         <div class="todo-main">
           <span class="title"></span>
           <span class="meta"></span>
+          <textarea
+            class="todo-detail-input"
+            rows="3"
+            maxlength="1200"
+            placeholder="할 일 상세 내용 기록"
+            aria-label="할 일 상세 내용"
+          ></textarea>
         </div>
         <div class="todo-controls">
           <select class="todo-category-select" aria-label="카테고리"></select>

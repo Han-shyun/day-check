@@ -85,14 +85,17 @@ https://yourname.github.io/day-check/
 
 ## 서버 연동 실행 방법
 1. npm install
-2. .env 파일에 NAVER_CLIENT_ID, NAVER_CLIENT_SECRET 등록
+2. .env 파일에 KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET 등록
 3. npm run start
 4. 브라우저에서 http://localhost:4173 접속
 
 ## 환경변수
-- NAVER_CLIENT_ID: 네이버 앱 client_id
-- NAVER_CLIENT_SECRET: 네이버 앱 client_secret
-- NAVER_REDIRECT_URI: 네이버 콜백 URL (미설정시 요청 호스트 기반 자동 생성)
+- KAKAO_CLIENT_ID: 카카오 앱 client_id
+- KAKAO_CLIENT_SECRET: 카카오 앱 client_secret
+- KAKAO_REDIRECT_URI: 카카오 콜백 URL (미설정시 요청 호스트 기반 자동 생성)
+- SESSION_ENCRYPTION_KEY: OAuth 토큰 암복호화 키 (32-byte AES-256)
+- SECURITY_EVENT_LOG_PATH: 보안 이벤트 로그 파일 경로(기본 security-events.log)
+- SECURITY_EVENTS_ENABLED: 보안 이벤트 로깅 여부(default true)
 - SESSION_SECRET: 세션 고정 키(현재 구현은 메모리 세션)
 - DATABASE_PATH: DB 경로(기본: daycheck.sqlite)
 - DATABASE_URL/FRONTEND_BASE_URL는 추후 확장용
@@ -105,4 +108,6 @@ https://yourname.github.io/day-check/
 - 인증 라우트 레이트리밋
 - 운영 환경 HTTPS 강제 (`NODE_ENV=production`)
 - 사용자별 상태 저장 API: `GET /api/state`, `PUT /api/state`
-- OAuth 시작 URL: `GET /api/auth/naver` 또는 `GET /api/auth/naver/login`
+- OAuth 시작 URL: `GET /api/auth/kakao` 또는 `GET /api/auth/kakao/login`
+
+

@@ -1,22 +1,50 @@
-import './style.css';
-
-const TODO_STORAGE_KEY = 'day-check.main.todos.v4';
+﻿const TODO_STORAGE_KEY = 'day-check.main.todos.v4';
 const DONE_STORAGE_KEY = 'day-check.main.doneLog.v1';
 const CALENDAR_STORAGE_KEY = 'day-check.main.calendarItems.v1';
 const CATEGORY_STORAGE_KEY = 'day-check.main.categories.v1';
+const BUCKET_LABELS_STORAGE_KEY = 'day-check.main.bucketLabels.v1';
+const BUCKET_ORDER_STORAGE_KEY = 'day-check.main.bucketOrder.v1';
+const BUCKET_SIZES_STORAGE_KEY = 'day-check.main.bucketSizes.v1';
+const BUCKET_VISIBILITY_STORAGE_KEY = 'day-check.main.bucketVisibility.v1';
+const PROJECT_LANES_STORAGE_KEY = 'day-check.main.projectLanes.v1';
 const LEGACY_TODO_KEYS = ['day-check.main.todos.v3', 'day-check.main.todos.v2'];
 
 const API_BASE = '/api';
 const SYNC_DEBOUNCE_MS = 500;
 
-const defaultCategories = [{ id: 'uncategorized', name: '�̺з�' }];
-const buckets = ['today', 'project', 'routine', 'inbox'];
+const defaultCategories = [{ id: 'uncategorized', name: '미분류' }];
+const defaultBucketLabels = {
+  today: '오늘',
+  project: '프로젝트',
+  routine: '루틴',
+  inbox: 'inbox',
+  bucket5: '버킷 5',
+  bucket6: '버킷 6',
+  bucket7: '버킷 7',
+  bucket8: '버킷 8',
+};
+const defaultBucketVisibility = {
+  today: true,
+  project: true,
+  routine: true,
+  inbox: true,
+  bucket5: false,
+  bucket6: false,
+  bucket7: false,
+  bucket8: false,
+};
+const buckets = ['today', 'project', 'routine', 'inbox', 'bucket5', 'bucket6', 'bucket7', 'bucket8'];
 
 const state = {
   todos: [],
   doneLog: [],
   calendarItems: [],
   categories: [...defaultCategories],
+  bucketLabels: { ...defaultBucketLabels },
+  bucketOrder: [...buckets],
+  bucketSizes: {},
+  bucketVisibility: { ...defaultBucketVisibility },
+  projectLanes: [],
   currentMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   selectedDate: '',
   version: 0,
@@ -28,11 +56,16 @@ let pendingSync = false;
 let syncing = false;
 let syncTimer = null;
 let eventsRegistered = false;
+let columnResizeObserver = null;
+let toastHostEl = null;
 
 const dateEl = document.getElementById('todayDate');
 const todoCountEl = document.getElementById('todoCount');
 const todoListEl = document.getElementById('todoList');
 const todoTemplate = document.getElementById('todoItemTemplate');
+const boardEl = document.querySelector('.board');
+const addProjectColumnBtn = document.getElementById('addProjectColumnBtn');
+const removeProjectColumnBtn = document.getElementById('removeProjectColumnBtn');
 
 const todoComposer = document.getElementById('todoComposer');
 const todoTextarea = document.getElementById('todoTextarea');
@@ -50,6 +83,8 @@ const authBtn = document.getElementById('authBtn');
 
 const weekRangeEl = document.getElementById('weekRange');
 const quickForm = document.getElementById('quickAddForm');
+const quickAddBody = document.getElementById('quickAddBody');
+const toggleQuickAddBtn = document.getElementById('toggleQuickAddBtn');
 const quickInput = document.getElementById('quickInput');
 const dueDateInput = document.getElementById('dueDateInput');
 const bucketSelect = document.getElementById('bucketSelect');
@@ -59,6 +94,9 @@ const calendarForm = document.getElementById('calendarForm');
 const calendarDateInput = document.getElementById('calendarDateInput');
 const calendarTypeSelect = document.getElementById('calendarTypeSelect');
 const calendarTextInput = document.getElementById('calendarTextInput');
+const calendarTodoFields = document.getElementById('calendarTodoFields');
+const calendarTodoTitleInput = document.getElementById('calendarTodoTitleInput');
+const calendarTodoDetailInput = document.getElementById('calendarTodoDetailInput');
 const calendarGrid = document.getElementById('calendarGrid');
 const calendarMonthLabel = document.getElementById('calendarMonthLabel');
 const prevMonthBtn = document.getElementById('prevMonthBtn');
@@ -71,15 +109,26 @@ const selectedCompletedList = document.getElementById('selectedCompletedList');
 const selectedCalendarNoteList = document.getElementById('selectedCalendarNoteList');
 
 const priorityLabel = {
-  3: '����',
-  2: '����',
-  1: '����',
+  3: '낮음',
+  2: '보통',
+  1: '높음',
 };
 
 const typeLabel = {
-  todo: 'todo',
-  note: 'note',
+  todo: '할 일',
+  note: '메모',
 };
+
+function hasBrokenText(value) {
+  const text = String(value || '');
+  if (!text) {
+    return false;
+  }
+  if (/[\uFFFD]/u.test(text)) {
+    return true;
+  }
+  return /\?[^\s"'`<>()[\]{}=]{1,3}/u.test(text);
+}
 
 function toLocalIsoDate(date) {
   const d = new Date(date);
@@ -158,6 +207,11 @@ function loadStateFromLocal() {
   const doneLog = safeJsonParse(DONE_STORAGE_KEY);
   const calendarItems = safeJsonParse(CALENDAR_STORAGE_KEY);
   const categories = safeJsonParse(CATEGORY_STORAGE_KEY);
+  const bucketLabels = safeJsonParse(BUCKET_LABELS_STORAGE_KEY);
+  const bucketOrder = safeJsonParse(BUCKET_ORDER_STORAGE_KEY);
+  const bucketSizes = safeJsonParse(BUCKET_SIZES_STORAGE_KEY);
+  const bucketVisibility = safeJsonParse(BUCKET_VISIBILITY_STORAGE_KEY);
+  const projectLanes = safeJsonParse(PROJECT_LANES_STORAGE_KEY);
 
   const normalizedTodos = normalizeTodos(Array.isArray(todos) ? todos : []);
   if (normalizedTodos.length === 0) {
@@ -178,13 +232,24 @@ function loadStateFromLocal() {
 
   const categoriesFallback =
     Array.isArray(categories) && categories.length > 0
-      ? categories.filter((category) => category && typeof category.id === 'string' && typeof category.name === 'string')
+      ? categories.filter(
+          (category) =>
+            category &&
+            typeof category.id === 'string' &&
+            typeof category.name === 'string' &&
+            !hasBrokenText(category.name),
+        )
       : [];
 
   state.categories =
     categoriesFallback.length > 0
       ? categoriesFallback
       : [...defaultCategories];
+  state.bucketLabels = normalizeBucketLabels(bucketLabels);
+  state.bucketOrder = normalizeBucketOrder(bucketOrder);
+  state.bucketSizes = normalizeBucketSizes(bucketSizes);
+  state.bucketVisibility = normalizeBucketVisibility(bucketVisibility);
+  state.projectLanes = normalizeProjectLanes(projectLanes);
 
   ensureCategoryIntegrity();
   ensureDateInState();
@@ -196,7 +261,9 @@ function normalizeTodos(todos) {
     .map((todo) => ({
       id: todo.id || crypto.randomUUID(),
       title: String(todo.title || '').trim(),
+      details: normalizeTodoDetails(todo.details || todo.description || ''),
       categoryId: todo.categoryId || todo.bucketId || todo.bucket || 'uncategorized',
+      projectLaneId: typeof todo.projectLaneId === 'string' ? todo.projectLaneId : '',
       bucket: todo.bucket || 'inbox',
       priority: Number(todo.priority || 2),
       dueDate: String(todo.dueDate || '').trim(),
@@ -205,13 +272,118 @@ function normalizeTodos(todos) {
     .filter((todo) => todo.title);
 }
 
+function normalizeBucketLabels(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return buckets.reduce((acc, bucket) => {
+    const raw = typeof source[bucket] === 'string' ? source[bucket].trim() : '';
+    const label = raw && !hasBrokenText(raw) ? raw : '';
+    acc[bucket] = label || defaultBucketLabels[bucket] || bucket;
+    return acc;
+  }, {});
+}
+
+function normalizeBucketOrder(input = []) {
+  const source = Array.isArray(input) ? input.filter((bucket) => buckets.includes(bucket)) : [];
+  const unique = [...new Set(source)];
+  const missing = buckets.filter((bucket) => !unique.includes(bucket));
+  return [...unique, ...missing];
+}
+
+function normalizeBucketSizes(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return buckets.reduce((acc, bucket) => {
+    const width = Number(source?.[bucket]?.width || 0);
+    const height = Number(source?.[bucket]?.height || 0);
+    acc[bucket] = {
+      width: Number.isFinite(width) && width >= 220 ? Math.round(width) : 0,
+      height: Number.isFinite(height) && height >= 220 ? Math.round(height) : 0,
+    };
+    return acc;
+  }, {});
+}
+
+function normalizeBucketVisibility(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const visibility = buckets.reduce((acc, bucket) => {
+    acc[bucket] =
+      typeof source[bucket] === 'boolean'
+        ? source[bucket]
+        : defaultBucketVisibility[bucket] !== false;
+    return acc;
+  }, {});
+
+  if (!buckets.some((bucket) => visibility[bucket] !== false)) {
+    visibility.today = true;
+  }
+  return visibility;
+}
+
+function normalizeProjectLaneName(raw) {
+  const normalized = normalizeBucketLabel(raw).slice(0, 30);
+  return hasBrokenText(normalized) ? '' : normalized;
+}
+
+function normalizeProjectLanes(input = []) {
+  const source = Array.isArray(input) ? input : [];
+  const laneIds = new Set();
+  const normalized = [];
+
+  source.forEach((item) => {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+
+    const id =
+      typeof item.id === 'string' && item.id.trim()
+        ? item.id.trim()
+        : crypto.randomUUID();
+    if (laneIds.has(id)) {
+      return;
+    }
+
+    const name = normalizeProjectLaneName(item.name || '');
+    if (!name) {
+      return;
+    }
+
+    const bucket = typeof item.bucket === 'string' && buckets.includes(item.bucket) ? item.bucket : 'project';
+    const duplicateInBucket = normalized.some(
+      (lane) => lane.bucket === bucket && lane.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (duplicateInBucket) {
+      return;
+    }
+
+    const categoryId =
+      typeof item.categoryId === 'string' && item.categoryId.trim()
+        ? item.categoryId.trim()
+        : '';
+    const width = Number(item.width || 0);
+    const height = Number(item.height || 0);
+
+    laneIds.add(id);
+    normalized.push({
+      id,
+      name,
+      bucket,
+      categoryId,
+      width: Number.isFinite(width) && width >= 220 ? Math.round(width) : 0,
+      height: Number.isFinite(height) && height >= 220 ? Math.round(height) : 0,
+    });
+  });
+
+  return normalized;
+}
+
 function normalizeDoneLog(doneLog) {
   return doneLog
     .filter((item) => item && item.id && item.title)
     .map((item) => ({
       id: item.id,
       title: String(item.title || '').trim(),
+      details: normalizeTodoDetails(item.details || item.description || ''),
       categoryId: item.categoryId || 'uncategorized',
+      projectLaneId: typeof item.projectLaneId === 'string' ? item.projectLaneId : '',
       bucket: item.bucket || 'inbox',
       priority: Number(item.priority || 2),
       dueDate: String(item.dueDate || ''),
@@ -236,7 +408,13 @@ function normalizeCalendarItems(items) {
 function normalizeCategoryState(input) {
   const categories =
     Array.isArray(input)
-      ? input.filter((item) => item && typeof item.id === 'string' && typeof item.name === 'string')
+      ? input.filter(
+          (item) =>
+            item &&
+            typeof item.id === 'string' &&
+            typeof item.name === 'string' &&
+            !hasBrokenText(item.name),
+        )
       : [];
 
   const fixed =
@@ -245,7 +423,7 @@ function normalizeCategoryState(input) {
       : [...defaultCategories];
 
   if (!fixed.some((item) => item.id === 'uncategorized')) {
-    fixed.unshift({ id: 'uncategorized', name: '�̺з�' });
+    fixed.unshift({ id: 'uncategorized', name: '미분류' });
   }
 
   return fixed;
@@ -256,6 +434,11 @@ function normalizeStateFromServer(payload) {
     todos: normalizeTodos(payload?.todos || []),
     doneLog: normalizeDoneLog(payload?.doneLog || []),
     calendarItems: normalizeCalendarItems(payload?.calendarItems || []),
+    bucketLabels: normalizeBucketLabels(payload?.bucketLabels || {}),
+    bucketOrder: normalizeBucketOrder(payload?.bucketOrder || []),
+    bucketSizes: normalizeBucketSizes(payload?.bucketSizes || {}),
+    bucketVisibility: normalizeBucketVisibility(payload?.bucketVisibility || {}),
+    projectLanes: normalizeProjectLanes(payload?.projectLanes || []),
     categories: normalizeCategoryState(payload?.categories || []),
     currentMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
     selectedDate: state.selectedDate || toLocalIsoDate(new Date()),
@@ -264,11 +447,30 @@ function normalizeStateFromServer(payload) {
 }
 
 function hasStoredData(payload) {
+  const bucketLabels = payload?.bucketLabels || {};
+  const bucketOrder = normalizeBucketOrder(payload?.bucketOrder || []);
+  const bucketSizes = normalizeBucketSizes(payload?.bucketSizes || {});
+  const bucketVisibility = normalizeBucketVisibility(payload?.bucketVisibility || {});
+  const hasCustomBucketLabels = Object.keys(defaultBucketLabels).some(
+    (bucket) => bucketLabels[bucket] && bucketLabels[bucket] !== defaultBucketLabels[bucket],
+  );
+  const hasCustomBucketOrder = bucketOrder.some((bucket, index) => bucket !== buckets[index]);
+  const hasCustomBucketSizes = buckets.some(
+    (bucket) => Number(bucketSizes?.[bucket]?.width || 0) > 0 || Number(bucketSizes?.[bucket]?.height || 0) > 0,
+  );
+  const hasCustomBucketVisibility = buckets.some((bucket) => bucketVisibility[bucket] !== defaultBucketVisibility[bucket]);
+  const hasProjectLanes = Array.isArray(payload?.projectLanes) && payload.projectLanes.length > 0;
+
   return (
     (Array.isArray(payload.todos) && payload.todos.length > 0) ||
     (Array.isArray(payload.doneLog) && payload.doneLog.length > 0) ||
     (Array.isArray(payload.calendarItems) && payload.calendarItems.length > 0) ||
-    (Array.isArray(payload.categories) && payload.categories.length > 1)
+    (Array.isArray(payload.categories) && payload.categories.length > 1) ||
+    hasCustomBucketLabels ||
+    hasCustomBucketOrder ||
+    hasCustomBucketSizes ||
+    hasCustomBucketVisibility ||
+    hasProjectLanes
   );
 }
 
@@ -277,6 +479,11 @@ function saveLocalState() {
   localStorage.setItem(DONE_STORAGE_KEY, JSON.stringify(state.doneLog));
   localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(state.calendarItems));
   localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(state.categories));
+  localStorage.setItem(BUCKET_LABELS_STORAGE_KEY, JSON.stringify(state.bucketLabels));
+  localStorage.setItem(BUCKET_ORDER_STORAGE_KEY, JSON.stringify(state.bucketOrder));
+  localStorage.setItem(BUCKET_SIZES_STORAGE_KEY, JSON.stringify(state.bucketSizes));
+  localStorage.setItem(BUCKET_VISIBILITY_STORAGE_KEY, JSON.stringify(state.bucketVisibility));
+  localStorage.setItem(PROJECT_LANES_STORAGE_KEY, JSON.stringify(state.projectLanes));
 }
 
 function ensureCategoryIntegrity() {
@@ -285,8 +492,10 @@ function ensureCategoryIntegrity() {
   }
 
   if (!state.categories.some((item) => item.id === 'uncategorized')) {
-    state.categories.unshift({ id: 'uncategorized', name: '�̺з�' });
+    state.categories.unshift({ id: 'uncategorized', name: '미분류' });
   }
+
+  ensureProjectLaneIntegrity();
 
   const ids = new Set(state.categories.map((item) => item.id));
   state.todos = state.todos.map((todo) => ({
@@ -295,21 +504,959 @@ function ensureCategoryIntegrity() {
   }));
 }
 
-function getCategoryName(categoryId) {
-  const category = state.categories.find((item) => item.id === categoryId);
-  return category ? category.name : '�̺з�';
+function getProjectLanesByBucket(bucket) {
+  return state.projectLanes.filter((lane) => lane.bucket === bucket);
 }
 
-function renderCategoryOptions(selectEl, selectedId) {
-  selectEl.innerHTML = '';
-  state.categories.forEach((category) => {
+function ensureProjectLaneIntegrity() {
+  state.projectLanes = normalizeProjectLanes(state.projectLanes);
+  const laneIds = new Set(state.projectLanes.map((lane) => lane.id));
+  const laneById = new Map(state.projectLanes.map((lane) => [lane.id, lane]));
+  const legacyCategoryToLaneId = new Map(
+    state.projectLanes
+      .filter((lane) => typeof lane.categoryId === 'string' && lane.categoryId)
+      .map((lane) => [lane.categoryId, lane.id]),
+  );
+
+  const resolveLaneId = (entry) => {
+    const current = typeof entry.projectLaneId === 'string' ? entry.projectLaneId : '';
+    if (current && laneIds.has(current)) {
+      const lane = laneById.get(current);
+      if (lane && lane.bucket === entry.bucket) {
+        return current;
+      }
+    }
+    const legacy = legacyCategoryToLaneId.get(entry.categoryId || '');
+    if (legacy && laneIds.has(legacy)) {
+      const lane = laneById.get(legacy);
+      if (lane && lane.bucket === entry.bucket) {
+        return legacy;
+      }
+    }
+    const sameBucketLane = state.projectLanes.find(
+      (lane) => lane.bucket === entry.bucket && lane.name === entry.categoryId,
+    );
+    if (sameBucketLane) {
+      return sameBucketLane.id;
+    }
+    return '';
+  };
+
+  const mapLane = (entry) => {
+    if (!entry || !entry.bucket || !buckets.includes(entry.bucket)) {
+      return '';
+    }
+    return resolveLaneId(entry);
+  };
+
+  state.todos = state.todos.map((todo) => ({
+    ...todo,
+    projectLaneId: mapLane(todo),
+  }));
+
+  state.doneLog = state.doneLog.map((item) => ({
+    ...item,
+    projectLaneId: mapLane(item),
+  }));
+}
+
+function addProjectLane(rawName, bucket = 'project') {
+  if (!buckets.includes(bucket)) {
+    return false;
+  }
+  const name = normalizeProjectLaneName(rawName);
+  if (!name) {
+    return false;
+  }
+
+  const duplicated = state.projectLanes.some(
+    (lane) => lane.bucket === bucket && lane.name.toLowerCase() === name.toLowerCase(),
+  );
+  if (duplicated) {
+    return false;
+  }
+
+  state.projectLanes.push({
+    id: crypto.randomUUID(),
+    name,
+    bucket,
+    categoryId: '',
+    width: 0,
+    height: 0,
+  });
+  ensureProjectLaneIntegrity();
+  return true;
+}
+
+function getProjectLaneName(projectLaneId) {
+  const lane = state.projectLanes.find((item) => item.id === projectLaneId);
+  return lane ? lane.name : '';
+}
+
+function getTodoGroupLabel(todo) {
+  if (!todo) {
+    return '';
+  }
+  const bucket = getBucketLabel(todo.bucket || 'inbox');
+  const lane = getProjectLaneName(todo.projectLaneId || '');
+  return lane ? `${bucket}/${lane}` : `${bucket}/unassigned`;
+}
+
+function getActiveBucketCount() {
+  const visibility = normalizeBucketVisibility(state.bucketVisibility);
+  return buckets.filter((bucket) => visibility[bucket] !== false).length;
+}
+
+function setBucketCount(targetCount) {
+  const count = Math.max(1, Math.min(buckets.length, Number(targetCount) || 1));
+  const order = normalizeBucketOrder(state.bucketOrder);
+  const nextVisibility = normalizeBucketVisibility(state.bucketVisibility);
+  const activeBuckets = order.slice(0, count);
+  const activeSet = new Set(activeBuckets);
+  const fallback = activeBuckets[0] || order[0] || buckets[0];
+
+  buckets.forEach((bucket) => {
+    nextVisibility[bucket] = activeSet.has(bucket);
+  });
+  state.bucketVisibility = nextVisibility;
+
+  state.todos = state.todos.map((todo) => {
+    if (activeSet.has(todo.bucket)) {
+      return todo;
+    }
+    return {
+      ...todo,
+      bucket: fallback,
+      projectLaneId: '',
+    };
+  });
+
+  ensureProjectLaneIntegrity();
+}
+
+function removeBucket(bucket) {
+  if (!buckets.includes(bucket)) {
+    return false;
+  }
+
+  const visibility = normalizeBucketVisibility(state.bucketVisibility);
+  const active = buckets.filter((key) => visibility[key] !== false);
+  if (!active.includes(bucket)) {
+    return false;
+  }
+  if (active.length <= 1) {
+    return false;
+  }
+
+  visibility[bucket] = false;
+  state.bucketVisibility = visibility;
+  return true;
+}
+
+function addNextHiddenBucket() {
+  const visibility = normalizeBucketVisibility(state.bucketVisibility);
+  const order = normalizeBucketOrder(state.bucketOrder);
+  const hidden = order.find((bucket) => visibility[bucket] === false);
+  if (!hidden) {
+    return '';
+  }
+
+  visibility[hidden] = true;
+  state.bucketVisibility = visibility;
+  return hidden;
+}
+
+function createBucketColumn(bucket) {
+  const article = document.createElement('article');
+  article.className = 'card column';
+  article.dataset.bucket = bucket;
+
+  const head = document.createElement('div');
+  head.className = 'column-head';
+
+  const title = document.createElement('h2');
+  title.id = `bucket-title-${bucket}`;
+  title.className = 'bucket-title';
+  title.setAttribute('contenteditable', 'true');
+  title.setAttribute('role', 'textbox');
+  title.dataset.bucket = bucket;
+  title.textContent = getBucketLabel(bucket);
+  head.appendChild(title);
+
+  const actions = document.createElement('div');
+  actions.className = 'column-head-actions';
+
+  const dragHandle = document.createElement('button');
+  dragHandle.className = 'column-drag-handle';
+  dragHandle.type = 'button';
+  dragHandle.setAttribute('aria-label', `${getBucketLabel(bucket)} 칼럼 드래그 이동`);
+  dragHandle.textContent = '≡';
+  actions.appendChild(dragHandle);
+
+  const count = document.createElement('span');
+  count.className = 'count';
+  count.id = `count-${bucket}`;
+  count.textContent = '0';
+  actions.appendChild(count);
+
+  head.appendChild(actions);
+  article.appendChild(head);
+
+  const list = document.createElement('ul');
+  list.id = `list-${bucket}`;
+  list.className = 'todo-list';
+  article.appendChild(list);
+
+  return article;
+}
+
+function ensureBucketColumns() {
+  if (!boardEl) {
+    return;
+  }
+  buckets.forEach((bucket) => {
+    const exists = boardEl.querySelector(`.column[data-bucket="${bucket}"]`);
+    if (exists) {
+      return;
+    }
+    boardEl.appendChild(createBucketColumn(bucket));
+  });
+}
+
+function ensureBucketSelectOptions() {
+  if (!bucketSelect) {
+    return;
+  }
+
+  buckets.forEach((bucket) => {
+    const exists = bucketSelect.querySelector(`option[value="${bucket}"]`);
+    if (exists) {
+      return;
+    }
     const option = document.createElement('option');
-    option.value = category.id;
-    option.textContent = category.name;
-    if (category.id === (selectedId || 'uncategorized')) {
+    option.value = bucket;
+    option.textContent = getBucketLabel(bucket);
+    bucketSelect.appendChild(option);
+  });
+}
+
+function getBucketLabel(bucket) {
+  return state.bucketLabels?.[bucket] || defaultBucketLabels[bucket] || bucket;
+}
+
+function normalizeBucketLabel(raw) {
+  return String(raw || '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function applyBucketLabels() {
+  buckets.forEach((bucket) => {
+    const label = getBucketLabel(bucket);
+    const titleEl = document.getElementById(`bucket-title-${bucket}`);
+    const optionEl = bucketSelect ? bucketSelect.querySelector(`option[value="${bucket}"]`) : null;
+
+    if (titleEl) {
+      titleEl.textContent = label;
+    }
+    if (optionEl) {
+      optionEl.textContent = label;
+    }
+  });
+}
+
+function applyBucketOrder() {
+  if (!boardEl) {
+    return;
+  }
+
+  const order = normalizeBucketOrder(state.bucketOrder);
+  state.bucketOrder = order;
+
+  order.forEach((bucket, index) => {
+    const column = boardEl.querySelector(`.column[data-bucket="${bucket}"]`);
+    if (!column) {
+      return;
+    }
+
+    boardEl.appendChild(column);
+  });
+}
+
+function applyBucketVisibility() {
+  const visibility = normalizeBucketVisibility(state.bucketVisibility);
+  if (!buckets.some((bucket) => visibility[bucket] !== false)) {
+    visibility[normalizeBucketOrder(state.bucketOrder)[0] || buckets[0]] = true;
+  }
+  state.bucketVisibility = visibility;
+
+  buckets.forEach((bucket) => {
+    const visible = visibility[bucket] !== false;
+    const column = boardEl ? boardEl.querySelector(`.column[data-bucket="${bucket}"]`) : null;
+    const option = bucketSelect ? bucketSelect.querySelector(`option[value="${bucket}"]`) : null;
+
+    if (column) {
+      column.hidden = !visible;
+    }
+
+    if (option) {
+      option.disabled = !visible;
+      option.hidden = !visible;
+    }
+  });
+
+  if (bucketSelect && bucketSelect.selectedOptions[0]?.disabled) {
+    const firstVisible = buckets.find((bucket) => visibility[bucket] !== false) || 'inbox';
+    bucketSelect.value = firstVisible;
+  }
+
+  if (addProjectColumnBtn) {
+    addProjectColumnBtn.classList.remove('hidden');
+    addProjectColumnBtn.textContent = '+ 버킷 추가';
+  }
+
+  if (removeProjectColumnBtn) {
+    removeProjectColumnBtn.classList.add('hidden');
+  }
+}
+
+function applyBucketSizes() {
+  buckets.forEach((bucket) => {
+    const column = boardEl ? boardEl.querySelector(`.column[data-bucket="${bucket}"]`) : null;
+    if (!column) {
+      return;
+    }
+
+    const size = state.bucketSizes?.[bucket] || {};
+    column.style.width = '';
+    column.style.height = Number(size.height) > 0 ? `${size.height}px` : '';
+  });
+}
+
+function applyProjectLaneSizes() {
+  // 프로젝트 라인은 기존 프로젝트 칼럼 내부 섹션으로 렌더링되어 별도 크기 조절이 필요 없다.
+}
+
+function syncBucketOrderFromDom() {
+  if (!boardEl) {
+    return;
+  }
+
+  const columns = Array.from(boardEl.querySelectorAll('.column[data-bucket]'));
+  const nextOrder = columns.map((column) => column.dataset.bucket).filter((bucket) => buckets.includes(bucket));
+
+  state.bucketOrder = normalizeBucketOrder(nextOrder);
+}
+
+function registerBucketResizeObserver() {
+  if (!boardEl || columnResizeObserver) {
+    return;
+  }
+
+  columnResizeObserver = new ResizeObserver((entries) => {
+    let changed = false;
+
+    entries.forEach((entry) => {
+      const bucket = entry.target?.dataset?.bucket;
+      if (!entry.target.style.width && !entry.target.style.height) {
+        return;
+      }
+
+      const width = Math.round(entry.contentRect.width);
+      const height = Math.round(entry.contentRect.height);
+      if (bucket && buckets.includes(bucket)) {
+        const prev = state.bucketSizes?.[bucket] || {};
+        if (Number(prev.height || 0) === height) {
+          return;
+        }
+        state.bucketSizes[bucket] = { width: 0, height };
+        changed = true;
+        return;
+      }
+    });
+
+    if (changed) {
+      queueSync();
+    }
+  });
+
+  boardEl.querySelectorAll('.column[data-bucket]').forEach((column) => {
+    columnResizeObserver.observe(column);
+  });
+}
+
+function renderProjectLaneColumns() {
+  if (!boardEl) {
+    return;
+  }
+
+  boardEl.querySelectorAll('.column[data-project-lane-id]').forEach((column) => {
+    if (columnResizeObserver) {
+      columnResizeObserver.unobserve(column);
+    }
+    column.remove();
+  });
+}
+
+function registerBucketDragControls() {
+  if (!boardEl) {
+    return;
+  }
+
+  let activeColumn = null;
+  let activeHandle = null;
+  let placeholderEl = null;
+  let pointerOffsetX = 0;
+  let pointerOffsetY = 0;
+  let lastPointerX = 0;
+  let lastPointerY = 0;
+  let rafPending = false;
+  let onWindowMove = null;
+  let onWindowEnd = null;
+
+  const updateDrag = () => {
+    rafPending = false;
+
+    if (!activeColumn) {
+      return;
+    }
+
+    activeColumn.style.left = `${Math.round(lastPointerX - pointerOffsetX)}px`;
+    activeColumn.style.top = `${Math.round(lastPointerY - pointerOffsetY)}px`;
+
+    const others = Array.from(
+      boardEl.querySelectorAll('.column[data-bucket], .column[data-project-lane-id], .column-placeholder'),
+    ).filter(
+      (col) => col !== placeholderEl && !col.hidden,
+    );
+    const target = others.find(
+      (col) => lastPointerX < col.getBoundingClientRect().left + col.getBoundingClientRect().width / 2,
+    );
+
+    if (target) {
+      boardEl.insertBefore(placeholderEl, target);
+    } else {
+      boardEl.appendChild(placeholderEl);
+    }
+  };
+
+  const onPointerMove = (event) => {
+    if (!activeColumn) {
+      return;
+    }
+
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+
+    if (!rafPending) {
+      rafPending = true;
+      window.requestAnimationFrame(updateDrag);
+    }
+  };
+
+  const finishDrag = () => {
+    if (!activeColumn) {
+      return;
+    }
+
+    if (rafPending) {
+      rafPending = false;
+      updateDrag();
+    }
+
+    activeColumn.style.position = '';
+    activeColumn.style.width = '';
+    activeColumn.style.height = '';
+    activeColumn.style.left = '';
+    activeColumn.style.top = '';
+    activeColumn.style.zIndex = '';
+    activeColumn.style.pointerEvents = '';
+    activeColumn.style.margin = '';
+    activeColumn.classList.remove('is-dragging');
+
+    if (placeholderEl && placeholderEl.parentNode) {
+      placeholderEl.parentNode.insertBefore(activeColumn, placeholderEl);
+      placeholderEl.remove();
+    } else {
+      boardEl.appendChild(activeColumn);
+    }
+
+    if (activeHandle) {
+      activeHandle.classList.remove('is-grabbing');
+    }
+
+    if (onWindowMove) {
+      window.removeEventListener('pointermove', onWindowMove);
+    }
+    if (onWindowEnd) {
+      window.removeEventListener('pointerup', onWindowEnd);
+      window.removeEventListener('pointercancel', onWindowEnd);
+    }
+
+    syncBucketOrderFromDom();
+    applyBucketOrder();
+    renderProjectLaneColumns();
+    applyBucketSizes();
+    applyProjectLaneSizes();
+    applyBucketVisibility();
+    queueSync();
+
+    activeColumn = null;
+    activeHandle = null;
+    placeholderEl = null;
+    pointerOffsetX = 0;
+    pointerOffsetY = 0;
+    lastPointerX = 0;
+    lastPointerY = 0;
+    rafPending = false;
+    onWindowMove = null;
+    onWindowEnd = null;
+  };
+
+  boardEl.addEventListener('pointerdown', (event) => {
+    const handle = event.target.closest('.column-drag-handle');
+    if (!handle) {
+      return;
+    }
+
+    const column = handle.closest('.column[data-bucket], .column[data-project-lane-id]');
+    if (!column || column.hidden) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const rect = column.getBoundingClientRect();
+    activeColumn = column;
+    activeHandle = handle;
+    pointerOffsetX = event.clientX - rect.left;
+    pointerOffsetY = event.clientY - rect.top;
+    lastPointerX = event.clientX;
+    lastPointerY = event.clientY;
+
+    placeholderEl = document.createElement('div');
+    placeholderEl.className = 'column-placeholder';
+    placeholderEl.style.width = `${Math.round(rect.width)}px`;
+    placeholderEl.style.height = `${Math.round(rect.height)}px`;
+    boardEl.insertBefore(placeholderEl, column.nextSibling);
+
+    activeColumn.classList.add('is-dragging');
+    activeHandle.classList.add('is-grabbing');
+    activeColumn.style.position = 'fixed';
+    activeColumn.style.width = `${Math.round(rect.width)}px`;
+    activeColumn.style.height = `${Math.round(rect.height)}px`;
+    activeColumn.style.left = `${Math.round(rect.left)}px`;
+    activeColumn.style.top = `${Math.round(rect.top)}px`;
+    activeColumn.style.zIndex = '30';
+    activeColumn.style.pointerEvents = 'none';
+    activeColumn.style.margin = '0';
+    document.body.appendChild(activeColumn);
+
+    onWindowMove = onPointerMove;
+    onWindowEnd = finishDrag;
+    window.addEventListener('pointermove', onWindowMove);
+    window.addEventListener('pointerup', onWindowEnd);
+    window.addEventListener('pointercancel', onWindowEnd);
+  });
+}
+
+function registerProjectColumnControls() {
+  if (removeProjectColumnBtn) {
+    removeProjectColumnBtn.classList.add('hidden');
+  }
+
+  if (addProjectColumnBtn) {
+    addProjectColumnBtn.addEventListener('click', () => {
+      const bucket = addNextHiddenBucket();
+      if (!bucket) {
+        showToast('추가 가능한 버킷이 없습니다.', 'error');
+        return;
+      }
+      showToast(`${getBucketLabel(bucket)} 버킷을 추가했습니다.`, 'success');
+      render();
+      queueSync();
+    });
+  }
+}
+
+function registerBucketLaneControls() {
+  document.querySelectorAll('.column[data-bucket]').forEach((column) => {
+    const bucket = column.dataset.bucket;
+    const actions = column.querySelector('.column-head-actions');
+    if (!bucket || !actions || actions.querySelector('.bucket-lane-add-btn')) {
+      return;
+    }
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'column-remove-btn bucket-lane-add-btn';
+    addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 세부 프로젝트 추가`);
+    addBtn.textContent = '+ 세부';
+    const laneCreate = document.createElement('div');
+    laneCreate.className = 'inline-category-create hidden bucket-lane-create';
+    const laneNameInput = document.createElement('input');
+    laneNameInput.type = 'text';
+    laneNameInput.maxLength = '30';
+    laneNameInput.placeholder = '세부 프로젝트 이름';
+    laneNameInput.setAttribute('aria-label', `${getBucketLabel(bucket)} 세부 프로젝트 이름`);
+    const laneCreateBtn = document.createElement('button');
+    laneCreateBtn.type = 'button';
+    laneCreateBtn.className = 'column-remove-btn';
+    laneCreateBtn.textContent = '추가';
+    const laneCancelBtn = document.createElement('button');
+    laneCancelBtn.type = 'button';
+    laneCancelBtn.className = 'column-remove-btn';
+    laneCancelBtn.textContent = '痍⑥냼';
+    laneCreate.append(laneNameInput, laneCreateBtn, laneCancelBtn);
+
+    const showLaneCreate = () => {
+      laneCreate.classList.remove('hidden');
+      addBtn.classList.add('hidden');
+      laneNameInput.value = '';
+      laneNameInput.focus();
+    };
+    const hideLaneCreate = () => {
+      laneCreate.classList.add('hidden');
+      addBtn.classList.remove('hidden');
+      laneNameInput.value = '';
+    };
+    const submitLaneCreate = () => {
+      if (!addProjectLane(laneNameInput.value, bucket)) {
+        showToast('이름이 비어 있거나 이미 존재합니다.', 'error');
+        laneNameInput.focus();
+        return;
+      }
+      showToast(`${getBucketLabel(bucket)} 세부 프로젝트를 추가했습니다.`, 'success');
+      hideLaneCreate();
+      render();
+      queueSync();
+    };
+
+    addBtn.addEventListener('click', () => {
+      if (laneCreate.classList.contains('hidden')) {
+        showLaneCreate();
+      }
+    });
+    laneCreateBtn.addEventListener('click', submitLaneCreate);
+    laneCancelBtn.addEventListener('click', hideLaneCreate);
+    laneNameInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        submitLaneCreate();
+      }
+      if (event.key === 'Escape') {
+        hideLaneCreate();
+      }
+    });
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'column-remove-btn bucket-remove-btn';
+    removeBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 버킷 제거`);
+    removeBtn.textContent = '제거';
+    removeBtn.addEventListener('click', () => {
+      if (!removeBucket(bucket)) {
+        showToast('최소 1개 버킷은 남아 있어야 합니다.', 'error');
+        return;
+      }
+      showToast(`${getBucketLabel(bucket)} 버킷을 제거했습니다.`, 'success');
+      render();
+      queueSync();
+    });
+
+    actions.insertBefore(laneCreate, actions.firstChild);
+    actions.insertBefore(removeBtn, actions.firstChild);
+    actions.insertBefore(addBtn, actions.firstChild);
+  });
+}
+
+function beginEditLaneName(lane, currentNameEl) {
+  if (!currentNameEl || !lane) {
+    return;
+  }
+
+  const originalText = String(lane.name || '');
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.maxLength = '30';
+  input.className = 'project-lane-name-editor';
+  input.value = originalText;
+  input.setAttribute('aria-label', '세부 프로젝트 이름 편집');
+  let committed = false;
+
+  const restoreName = () => {
+    const restored = document.createElement('strong');
+    restored.textContent = lane.name;
+    restored.className = 'project-lane-name';
+    input.replaceWith(restored);
+    return restored;
+  };
+
+  const commit = () => {
+    const nextName = normalizeProjectLaneName(input.value);
+    if (!nextName) {
+      showToast('이름이 비어 있거나 길이가 너무 깁니다.', 'error');
+      restoreName();
+      return;
+    }
+
+    const duplicated = state.projectLanes.some(
+      (item) =>
+        item.id !== lane.id &&
+        item.bucket === lane.bucket &&
+        item.name.toLowerCase() === nextName.toLowerCase(),
+    );
+
+    if (duplicated) {
+      showToast('이미 존재하는 이름입니다.', 'error');
+      input.focus();
+      input.select();
+      return;
+    }
+
+    if (nextName === lane.name) {
+      committed = true;
+      restoreName();
+      return;
+    }
+
+    lane.name = nextName;
+    ensureProjectLaneIntegrity();
+    committed = true;
+    render();
+    queueSync();
+    showToast('세부 프로젝트 이름을 변경했습니다.', 'success');
+  };
+
+  input.addEventListener('blur', () => {
+    if (!committed) {
+      commit();
+    }
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      commit();
+      return;
+    }
+    if (event.key === 'Escape') {
+      committed = true;
+      input.blur();
+      restoreName();
+    }
+  });
+
+  currentNameEl.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
+function renderProjectLaneOptions(selectEl, todo) {
+  if (!selectEl) {
+    return;
+  }
+
+  const bucket = todo?.bucket || 'inbox';
+  const lanes = state.projectLanes.filter((lane) => lane.bucket === bucket);
+  selectEl.innerHTML = '';
+
+  const emptyOption = document.createElement('option');
+  emptyOption.value = '';
+  emptyOption.textContent = '미지정 프로젝트 칼럼';
+  if (!todo.projectLaneId) {
+    emptyOption.selected = true;
+  }
+  selectEl.appendChild(emptyOption);
+
+  lanes.forEach((lane) => {
+    const option = document.createElement('option');
+    option.value = lane.id;
+    option.textContent = lane.name;
+    if (lane.id === (todo.projectLaneId || '')) {
       option.selected = true;
     }
     selectEl.appendChild(option);
+  });
+
+  selectEl.disabled = false;
+}
+
+function removeProjectLane(laneId) {
+  const target = state.projectLanes.find((lane) => lane.id === laneId);
+  if (!target) {
+    return false;
+  }
+  state.projectLanes = state.projectLanes.filter((lane) => lane.id !== laneId);
+  state.todos = state.todos.map((todo) => (todo.projectLaneId === laneId ? { ...todo, projectLaneId: '' } : todo));
+  state.doneLog = state.doneLog.map((todo) => (todo.projectLaneId === laneId ? { ...todo, projectLaneId: '' } : todo));
+  return true;
+}
+
+function renderProjectLaneGroups(listEl, todos, bucket) {
+  const lanes = state.projectLanes.filter((lane) => lane.bucket === bucket);
+  const grouped = new Map(lanes.map((lane) => [lane.id, []]));
+  const unassigned = [];
+
+  todos.forEach((todo) => {
+    if (todo.projectLaneId && grouped.has(todo.projectLaneId)) {
+      grouped.get(todo.projectLaneId).push(todo);
+      return;
+    }
+    unassigned.push(todo);
+  });
+
+  lanes.forEach((lane) => {
+    const section = document.createElement('li');
+    section.className = 'project-lane-group';
+
+    const head = document.createElement('div');
+    head.className = 'project-lane-head';
+
+    const name = document.createElement('strong');
+    name.textContent = lane.name;
+    head.appendChild(name);
+
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = String(grouped.get(lane.id).length);
+    head.appendChild(count);
+
+    const renameBtn = document.createElement('button');
+    renameBtn.type = 'button';
+    renameBtn.className = 'column-remove-btn';
+    renameBtn.textContent = '이름';
+    renameBtn.addEventListener('click', () => {
+      beginEditLaneName(lane, name);
+    });
+    head.appendChild(renameBtn);
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'column-remove-btn';
+    deleteBtn.textContent = '제거';
+    deleteBtn.addEventListener('click', () => {
+      removeProjectLane(lane.id);
+      ensureProjectLaneIntegrity();
+      showToast('세부 프로젝트를 제거했습니다.', 'success');
+      render();
+      queueSync();
+    });
+    head.appendChild(deleteBtn);
+
+    section.appendChild(head);
+
+    const nested = document.createElement('ul');
+    nested.className = 'todo-list';
+    renderTodoItems(nested, sortTodos(grouped.get(lane.id)));
+    section.appendChild(nested);
+    listEl.appendChild(section);
+  });
+
+  if (unassigned.length > 0 || lanes.length === 0) {
+    const section = document.createElement('li');
+    section.className = 'project-lane-group';
+
+  const head = document.createElement('div');
+  head.className = 'project-lane-head';
+
+  const name = document.createElement('strong');
+  name.textContent = lanes.length === 0 ? getBucketLabel(bucket) : '미지정';
+  head.appendChild(name);
+
+    const count = document.createElement('span');
+    count.className = 'count';
+    count.textContent = String(unassigned.length);
+    head.appendChild(count);
+
+    section.appendChild(head);
+
+    const nested = document.createElement('ul');
+    nested.className = 'todo-list';
+    renderTodoItems(nested, sortTodos(unassigned));
+    section.appendChild(nested);
+    listEl.appendChild(section);
+  }
+}
+
+function renderTodoItems(listEl, todos) {
+  todos.forEach((todo) => {
+    const item = todoTemplate.content.firstElementChild.cloneNode(true);
+    const titleEl = item.querySelector('.title');
+    const metaEl = item.querySelector('.meta');
+    const detailsEl = item.querySelector('.todo-detail-input');
+    const completeBtn = item.querySelector('.complete');
+    const deleteBtn = item.querySelector('.delete');
+    const projectSelect = item.querySelector('.todo-category-select');
+
+    titleEl.textContent = todo.title;
+    const dateText = todo.dueDate ? ` / 마감일 ${todo.dueDate}` : '';
+    const projectText = ` / 프로젝트 ${getProjectLaneName(todo.projectLaneId) || '미지정'}`;
+    metaEl.textContent = `우선순위: ${priorityLabel[todo.priority] || '없음'}${dateText}${projectText}`;
+    bindTodoDetailsInput(detailsEl, todo);
+
+    renderProjectLaneOptions(projectSelect, todo);
+    projectSelect.addEventListener('change', () => {
+      todo.projectLaneId = projectSelect.value;
+      render();
+      queueSync();
+    });
+
+    completeBtn.addEventListener('click', () => {
+      state.doneLog.unshift({
+        id: todo.id,
+        title: todo.title,
+        details: todo.details || '',
+        categoryId: todo.categoryId,
+        projectLaneId: todo.projectLaneId || '',
+        bucket: todo.bucket,
+        priority: todo.priority,
+        dueDate: todo.dueDate || '',
+        createdAt: todo.createdAt,
+        completedAt: new Date().toISOString(),
+      });
+      state.todos = state.todos.filter((t) => t.id !== todo.id);
+      render();
+      queueSync();
+    });
+
+    deleteBtn.addEventListener('click', () => {
+      state.todos = state.todos.filter((t) => t.id !== todo.id);
+      render();
+      queueSync();
+    });
+
+    listEl.appendChild(item);
+  });
+}
+
+function registerBucketTitleEditors() {
+  const titleEls = document.querySelectorAll('.bucket-title');
+  titleEls.forEach((titleEl) => {
+    const bucket = titleEl.dataset.bucket;
+    if (!bucket || !buckets.includes(bucket)) {
+      return;
+    }
+
+    titleEl.addEventListener('blur', () => {
+      const label = normalizeBucketLabel(titleEl.textContent);
+      const current = getBucketLabel(bucket);
+      const nextLabel = label || defaultBucketLabels[bucket] || bucket;
+
+      if (nextLabel === current) {
+        return;
+      }
+
+      state.bucketLabels[bucket] = nextLabel;
+      applyBucketLabels();
+      queueSync();
+    });
+
+    titleEl.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        titleEl.blur();
+      }
+    });
   });
 }
 
@@ -322,11 +1469,27 @@ function sortTodos(list) {
   });
 }
 
-function createTodo({ title, categoryId = 'uncategorized', bucket = 'inbox', priority = 2, dueDate = '' }) {
+function normalizeTodoDetails(raw) {
+  return String(raw || '')
+    .replace(/\r\n/g, '\n')
+    .slice(0, 1200);
+}
+
+function createTodo({
+  title,
+  details = '',
+  categoryId = 'uncategorized',
+  projectLaneId = '',
+  bucket = 'inbox',
+  priority = 2,
+  dueDate = '',
+}) {
   return {
     id: crypto.randomUUID(),
     title,
+    details: normalizeTodoDetails(details),
     categoryId,
+    projectLaneId,
     bucket,
     priority: Number(priority),
     dueDate: dueDate || '',
@@ -353,6 +1516,45 @@ function formatToday() {
     weekday: 'long',
   });
   dateEl.textContent = fmt.format(now);
+}
+
+function ensureToastHost() {
+  if (toastHostEl && document.body.contains(toastHostEl)) {
+    return toastHostEl;
+  }
+
+  toastHostEl = document.getElementById('toastHost');
+  if (!toastHostEl) {
+    toastHostEl = document.createElement('div');
+    toastHostEl.id = 'toastHost';
+    toastHostEl.className = 'toast-host';
+    document.body.appendChild(toastHostEl);
+  }
+
+  return toastHostEl;
+}
+
+function showToast(message, type = 'info') {
+  const host = ensureToastHost();
+  if (!host || !message) {
+    return;
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = String(message);
+  host.appendChild(toast);
+
+  window.requestAnimationFrame(() => {
+    toast.classList.add('is-visible');
+  });
+
+  window.setTimeout(() => {
+    toast.classList.remove('is-visible');
+    window.setTimeout(() => {
+      toast.remove();
+    }, 220);
+  }, 2200);
 }
 
 function markStateDirty() {
@@ -410,12 +1612,12 @@ function updateAuthUI() {
   }
 
   if (isServerSync && authUser) {
-    const label = authUser.nickname || authUser.email || `naver-${authUser.naverId || ''}`;
-    authStatusEl.textContent = `�α��ε�: ${label}`;
-    authBtn.textContent = '�α׾ƿ�';
+    const label = authUser.nickname || authUser.email || `kakao-${authUser.kakaoId || ''}`;
+    authStatusEl.textContent = `로그인 상태: ${label}`;
+    authBtn.innerHTML = '<span>로그아웃</span>';
   } else {
-    authStatusEl.textContent = '���� ���';
-    authBtn.textContent = '���̹� �α���';
+    authStatusEl.textContent = '로그인 필요';
+    authBtn.innerHTML = '<span class="kakao-logo" aria-hidden="true">K</span><span>카카오 로그인</span>';
   }
 }
 
@@ -469,6 +1671,11 @@ async function syncState() {
         doneLog: state.doneLog,
         calendarItems: state.calendarItems,
         categories: state.categories,
+        bucketLabels: state.bucketLabels,
+        bucketOrder: state.bucketOrder,
+        bucketSizes: state.bucketSizes,
+        bucketVisibility: state.bucketVisibility,
+        projectLanes: state.projectLanes,
         version: state.version,
       }),
     });
@@ -482,6 +1689,11 @@ async function syncState() {
           state.doneLog = restored.doneLog;
           state.calendarItems = restored.calendarItems;
           state.categories = normalizeCategoryState(data.state?.categories || state.categories);
+          state.bucketLabels = normalizeBucketLabels(data.state?.bucketLabels || state.bucketLabels);
+          state.bucketOrder = normalizeBucketOrder(data.state?.bucketOrder || state.bucketOrder);
+          state.bucketSizes = normalizeBucketSizes(data.state?.bucketSizes || state.bucketSizes);
+          state.bucketVisibility = normalizeBucketVisibility(data.state?.bucketVisibility || state.bucketVisibility);
+          state.projectLanes = normalizeProjectLanes(data.state?.projectLanes || state.projectLanes);
           state.version = Number(data.version || state.version);
           ensureCategoryIntegrity();
           render();
@@ -520,6 +1732,14 @@ function queueSync() {
 }
 
 function render() {
+  ensureBucketColumns();
+  ensureBucketSelectOptions();
+  applyBucketOrder();
+  renderProjectLaneColumns();
+  applyBucketSizes();
+  applyProjectLaneSizes();
+  applyBucketVisibility();
+  applyBucketLabels();
   renderTodoComposer();
   renderTodoList();
   renderTodosByBucket();
@@ -532,58 +1752,42 @@ function renderTodoComposer() {
   if (!composerCategory) {
     return;
   }
-  renderCategoryOptions(composerCategory, composerCategory.value || 'uncategorized');
+  composerCategory.innerHTML = '';
+  const noneOption = document.createElement('option');
+  noneOption.value = '';
+  noneOption.textContent = '세부 프로젝트 없음';
+  composerCategory.appendChild(noneOption);
+  state.projectLanes
+    .filter((lane) => lane.bucket === 'inbox')
+    .forEach((lane) => {
+      const option = document.createElement('option');
+      option.value = lane.id;
+      option.textContent = lane.name;
+      composerCategory.appendChild(option);
+    });
+}
+
+function bindTodoDetailsInput(detailInput, todo) {
+  if (!detailInput) {
+    return;
+  }
+
+  detailInput.value = todo.details || '';
+  detailInput.addEventListener('blur', () => {
+    const next = normalizeTodoDetails(detailInput.value);
+    if ((todo.details || '') === next) {
+      return;
+    }
+    todo.details = next;
+    queueSync();
+  });
 }
 
 function renderTodoList() {
   const sorted = sortTodos(state.todos);
   todoCountEl.textContent = String(sorted.length);
   todoListEl.innerHTML = '';
-
-  sorted.forEach((todo) => {
-    const item = todoTemplate.content.firstElementChild.cloneNode(true);
-    const titleEl = item.querySelector('.title');
-    const metaEl = item.querySelector('.meta');
-    const categorySelect = item.querySelector('.todo-category-select');
-    const completeBtn = item.querySelector('.complete');
-    const deleteBtn = item.querySelector('.delete');
-
-    titleEl.textContent = todo.title;
-    const dateText = todo.dueDate ? ` ������: ${todo.dueDate}` : '';
-    metaEl.textContent = `�켱����: ${priorityLabel[todo.priority] || '����'}${dateText}`;
-
-    renderCategoryOptions(categorySelect, todo.categoryId);
-
-    categorySelect.addEventListener('change', () => {
-      todo.categoryId = categorySelect.value;
-      render();
-      queueSync();
-    });
-
-    completeBtn.addEventListener('click', () => {
-      state.doneLog.unshift({
-        id: todo.id,
-        title: todo.title,
-        categoryId: todo.categoryId,
-        bucket: todo.bucket || 'inbox',
-        priority: todo.priority,
-        dueDate: todo.dueDate,
-        createdAt: todo.createdAt,
-        completedAt: new Date().toISOString(),
-      });
-      state.todos = state.todos.filter((item) => item.id !== todo.id);
-      render();
-      queueSync();
-    });
-
-    deleteBtn.addEventListener('click', () => {
-      state.todos = state.todos.filter((item) => item.id !== todo.id);
-      render();
-      queueSync();
-    });
-
-    todoListEl.appendChild(item);
-  });
+  renderTodoItems(todoListEl, sorted);
 }
 
 function renderTodosByBucket() {
@@ -599,50 +1803,12 @@ function renderTodosByBucket() {
     const sorted = sortTodos(filtered);
 
     countEl.textContent = String(sorted.length);
-
-    sorted.forEach((todo) => {
-      const item = todoTemplate.content.firstElementChild.cloneNode(true);
-      const titleEl = item.querySelector('.title');
-      const metaEl = item.querySelector('.meta');
-      const completeBtn = item.querySelector('.complete');
-      const deleteBtn = item.querySelector('.delete');
-      const bucketSelect = item.querySelector('.todo-category-select');
-
-      titleEl.textContent = todo.title;
-      const dateText = todo.dueDate ? ` ������: ${todo.dueDate}` : '';
-      metaEl.textContent = `�켱����: ${priorityLabel[todo.priority] || '����'}${dateText}`;
-
-      renderCategoryOptions(bucketSelect, todo.categoryId);
-      bucketSelect.addEventListener('change', () => {
-        todo.categoryId = bucketSelect.value;
-        render();
-        queueSync();
-      });
-
-      completeBtn.addEventListener('click', () => {
-        state.doneLog.unshift({
-          id: todo.id,
-          title: todo.title,
-          categoryId: todo.categoryId,
-          bucket: todo.bucket,
-          priority: todo.priority,
-          dueDate: todo.dueDate || '',
-          createdAt: todo.createdAt,
-          completedAt: new Date().toISOString(),
-        });
-        state.todos = state.todos.filter((t) => t.id !== todo.id);
-        render();
-        queueSync();
-      });
-
-      deleteBtn.addEventListener('click', () => {
-        state.todos = state.todos.filter((t) => t.id !== todo.id);
-        render();
-        queueSync();
-      });
-
-      listEl.appendChild(item);
-    });
+    const hasLane = state.projectLanes.some((lane) => lane.bucket === bucket);
+    if (hasLane) {
+      renderProjectLaneGroups(listEl, sorted, bucket);
+    } else {
+      renderTodoItems(listEl, sorted);
+    }
   }
 }
 
@@ -658,7 +1824,7 @@ function getEntriesForDate(dateText) {
     .map((todo) => ({
       id: todo.id,
       type: 'todo',
-      text: `${todo.title} (${getCategoryName(todo.categoryId)})`,
+      text: `${todo.title} (${getTodoGroupLabel(todo)})`,
       source: 'todo',
     }));
 
@@ -696,40 +1862,62 @@ function renderSelectedDatePanel() {
   const completedTodos = state.doneLog.filter((log) => parseIsoDate(log.completedAt) === targetDate);
   const notes = state.calendarItems.filter((item) => item.date === targetDate);
 
-  selectedDateSummary.textContent = `���� ${createdTodos.length}�� / �Ϸ� ${completedTodos.length}�� / �޸� ${notes.length}��`;
+  selectedDateSummary.textContent = `작성 ${createdTodos.length}개 / 완료 ${completedTodos.length}개 / 메모 ${notes.length}개`;
   selectedCreatedList.innerHTML = '';
   selectedCompletedList.innerHTML = '';
   selectedCalendarNoteList.innerHTML = '';
 
   if (createdTodos.length === 0) {
-    addEmptyMessage(selectedCreatedList, '�ش� ��¥�� ������ �� ���� �����ϴ�.');
+    addEmptyMessage(selectedCreatedList, '선택한 날짜에 생성된 할 일이 없습니다.');
   } else {
     createdTodos.forEach((todo) => {
       const li = document.createElement('li');
-      li.textContent = `[${getCategoryName(todo.categoryId)}] ${todo.title} (${formatDisplayDateTime(todo.createdAt)})`;
+      li.textContent = `[${getTodoGroupLabel(todo)}] ${todo.title} (${formatDisplayDateTime(todo.createdAt)})`;
       selectedCreatedList.appendChild(li);
     });
   }
 
   if (completedTodos.length === 0) {
-    addEmptyMessage(selectedCompletedList, '�ش� ��¥�� �Ϸ��� �׸��� �����ϴ�.');
+    addEmptyMessage(selectedCompletedList, '선택한 날짜에 완료한 할 일이 없습니다.');
   } else {
     completedTodos.forEach((log) => {
-      const dueDateText = log.dueDate ? ` ����: ${log.dueDate}` : '';
+      const dueDateText = log.dueDate ? ` / 마감일 ${log.dueDate}` : '';
       const li = document.createElement('li');
-      li.textContent = `[${getCategoryName(log.categoryId)}] ${log.title} (${formatDisplayDateTime(log.completedAt)}${dueDateText})`;
+      li.textContent = `[${getTodoGroupLabel(log)}] ${log.title} (${formatDisplayDateTime(log.completedAt)}${dueDateText})`;
       selectedCompletedList.appendChild(li);
     });
   }
 
   if (notes.length === 0) {
-    addEmptyMessage(selectedCalendarNoteList, '�ش� ��¥�� �޸�/����� �����ϴ�.');
+    addEmptyMessage(selectedCalendarNoteList, '선택한 날짜에 노트/메모가 없습니다.');
   } else {
     notes.forEach((item) => {
       const li = document.createElement('li');
       li.textContent = `[${typeLabel[item.type] || item.type}] ${item.text}`;
       selectedCalendarNoteList.appendChild(li);
     });
+  }
+}
+
+function isCalendarTodoMode() {
+  return calendarTypeSelect?.value === 'todo';
+}
+
+function applyCalendarFormMode() {
+  const isTodo = isCalendarTodoMode();
+  if (calendarTodoFields) {
+    if (isTodo) {
+      calendarTodoFields.classList.remove('hidden');
+    } else {
+      calendarTodoFields.classList.add('hidden');
+    }
+  }
+  if (calendarTextInput) {
+    calendarTextInput.classList.toggle('hidden', isTodo);
+    calendarTextInput.required = !isTodo;
+  }
+  if (calendarTodoTitleInput) {
+    calendarTodoTitleInput.required = isTodo;
   }
 }
 
@@ -774,7 +1962,7 @@ function renderCalendar() {
     const { scheduledCount, completedCount } = countDailyStats(dateText);
     const dailySummary = document.createElement('p');
     dailySummary.className = 'calendar-summary';
-    dailySummary.textContent = `���� ${scheduledCount} / �Ϸ� ${completedCount}`;
+    dailySummary.textContent = `일정 ${scheduledCount} / 완료 ${completedCount}`;
     cell.appendChild(dailySummary);
 
     const entries = getEntriesForDate(dateText);
@@ -782,7 +1970,7 @@ function renderCalendar() {
     if (entries.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'calendar-empty';
-      empty.textContent = '�׸� ����';
+      empty.textContent = '일정 없음';
       cell.appendChild(empty);
     } else {
       const list = document.createElement('ul');
@@ -808,7 +1996,7 @@ function renderCalendar() {
           removeBtn.type = 'button';
           removeBtn.className = 'calendar-remove';
           removeBtn.textContent = 'x';
-          removeBtn.setAttribute('aria-label', '�׸� ����');
+          removeBtn.setAttribute('aria-label', '항목 삭제');
           removeBtn.addEventListener('click', (event) => {
             event.stopPropagation();
             state.calendarItems = state.calendarItems.filter((item) => item.id !== entry.id);
@@ -824,7 +2012,7 @@ function renderCalendar() {
       if (entries.length > 3) {
         const more = document.createElement('li');
         more.className = 'calendar-more';
-        more.textContent = `+${entries.length - 3}�� �� ����`;
+        more.textContent = `+${entries.length - 3}건`;
         list.appendChild(more);
       }
 
@@ -833,213 +2021,353 @@ function renderCalendar() {
 
     cell.addEventListener('click', () => {
       state.selectedDate = dateText;
+      state.currentMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       render();
+      if (calendarForm) {
+        if (calendarDateInput) {
+          calendarDateInput.value = dateText;
+        }
+        if (calendarTypeSelect) {
+          calendarTypeSelect.value = 'note';
+        }
+        applyCalendarFormMode();
+        if (calendarTextInput && !calendarTextInput.classList.contains('hidden')) {
+          calendarTextInput.focus();
+        } else if (calendarTodoTitleInput) {
+          calendarTodoTitleInput.focus();
+        }
+        calendarForm.hidden = false;
+      }
     });
 
     calendarGrid.appendChild(cell);
   }
 }
-
-function renderWeeklyReport() {
-  const start = startOfWeek(new Date());
-  const end = endOfWeek(new Date());
-  const fmt = new Intl.DateTimeFormat('ko-KR', { month: 'numeric', day: 'numeric' });
-
-  const doneThisWeek = state.doneLog.filter((item) => inCurrentWeek(item.completedAt));
-  const pending = sortTodos(state.todos);
-
-  weekRangeEl.textContent = `${fmt.format(start)} ~ ${fmt.format(end)}`;
-
-  const doneCountEl = document.getElementById('weeklyDoneCount');
-  const pendingCountEl = document.getElementById('weeklyPendingCount');
-  const doneListEl = document.getElementById('weeklyDoneList');
-  const pendingListEl = document.getElementById('weeklyPendingList');
-
-  doneCountEl.textContent = `${doneThisWeek.length}��`;
-  pendingCountEl.textContent = `${pending.length}��`;
-
-  doneListEl.innerHTML = '';
-  pendingListEl.innerHTML = '';
-
-  if (doneThisWeek.length === 0) {
-    doneListEl.innerHTML = '<li>�̹� �� �Ϸ� �׸��� �����ϴ�.</li>';
-  } else {
-    doneThisWeek.slice(0, 12).forEach((item) => {
-      const li = document.createElement('li');
-      li.textContent = `[${getCategoryName(item.categoryId)}] ${item.title}`;
-      doneListEl.appendChild(li);
-    });
-  }
-
-  if (pending.length === 0) {
-    pendingListEl.innerHTML = '<li>���� �� ���� �����ϴ�.</li>';
-  } else {
-    pending.slice(0, 12).forEach((item) => {
-      const li = document.createElement('li');
-      li.textContent = `[${getCategoryName(item.categoryId)}] ${item.title} (${priorityLabel[item.priority] || '����'})`;
-      pendingListEl.appendChild(li);
-    });
-  }
-}
-
 function registerEvents() {
   if (eventsRegistered) {
     return;
   }
   eventsRegistered = true;
 
-  todoComposer.addEventListener('submit', (event) => {
-    event.preventDefault();
+  registerBucketDragControls();
+  registerBucketResizeObserver();
+  registerProjectColumnControls();
+  registerBucketTitleEditors();
+  registerBucketLaneControls();
 
-    const lines = todoTextarea.value
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
+  if (todoComposer) {
+    todoComposer.addEventListener('submit', (event) => {
+      event.preventDefault();
 
-    if (lines.length === 0) {
-      return;
-    }
+      const lines = todoTextarea.value
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
 
-    lines.forEach((title) => {
+      if (lines.length === 0) {
+        return;
+      }
+
+      lines.forEach((title) => {
+        state.todos.unshift(
+          createTodo({
+            title,
+            categoryId: composerCategory?.value || 'uncategorized',
+            bucket: 'inbox',
+            priority: Number(composerPriority?.value || 2),
+            dueDate: composerDate?.value || '',
+          }),
+        );
+      });
+
+      saveLocalState();
+      queueSync();
+      render();
+      todoTextarea.value = '';
+      if (composerDate) {
+        composerDate.value = '';
+      }
+      if (composerPriority) {
+        composerPriority.value = '2';
+      }
+      if (todoTextarea) {
+        todoTextarea.focus();
+      }
+    });
+  }
+
+  if (openCategoryInlineBtn && inlineCategoryCreate) {
+    openCategoryInlineBtn.addEventListener('click', () => {
+      const isHidden = inlineCategoryCreate.classList.contains('hidden');
+      const nextHidden = !isHidden;
+      inlineCategoryCreate.classList.toggle('hidden', nextHidden);
+      if (!nextHidden && newCategoryInput) {
+        newCategoryInput.focus();
+      }
+    });
+
+    cancelCategoryBtn?.addEventListener('click', () => {
+      newCategoryInput.value = '';
+      inlineCategoryCreate.classList.add('hidden');
+    });
+
+    createCategoryBtn?.addEventListener('click', () => {
+      const name = newCategoryInput?.value?.trim?.() || '';
+      if (!name) {
+        return;
+      }
+
+      const exists = state.categories.find((item) => item.name === name);
+      if (exists) {
+        if (composerCategory) {
+          composerCategory.value = exists.id;
+        }
+        newCategoryInput.value = '';
+        inlineCategoryCreate.classList.add('hidden');
+        return;
+      }
+
+      const category = { id: crypto.randomUUID(), name };
+      state.categories.push(category);
+      ensureCategoryIntegrity();
+      newCategoryInput.value = '';
+      if (composerCategory) {
+        composerCategory.value = category.id;
+      }
+      inlineCategoryCreate.classList.add('hidden');
+      render();
+      queueSync();
+    });
+
+    newCategoryInput?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        createCategoryBtn.click();
+      }
+    });
+  }
+
+  if (quickForm) {
+    const hideQuickAdd = () => {
+      if (quickAddBody) {
+        quickAddBody.classList.add('hidden');
+      }
+      if (toggleQuickAddBtn) {
+        toggleQuickAddBtn.setAttribute('aria-expanded', 'false');
+        toggleQuickAddBtn.textContent = '펼치기';
+      }
+    };
+    const showQuickAdd = () => {
+      if (quickAddBody) {
+        quickAddBody.classList.remove('hidden');
+      }
+      if (toggleQuickAddBtn) {
+        toggleQuickAddBtn.setAttribute('aria-expanded', 'true');
+        toggleQuickAddBtn.textContent = '접기';
+      }
+      if (quickInput) {
+        quickInput.focus();
+      }
+    };
+
+    toggleQuickAddBtn?.addEventListener('click', () => {
+      if (quickAddBody?.classList.contains('hidden')) {
+        showQuickAdd();
+      } else {
+        hideQuickAdd();
+      }
+    });
+
+    hideQuickAdd();
+
+    quickForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const title = quickInput.value.trim();
+      if (!title) {
+        return;
+      }
+
       state.todos.unshift(
         createTodo({
           title,
-          categoryId: composerCategory.value || 'uncategorized',
-          bucket: 'inbox',
-          priority: composerPriority.value,
-          dueDate: composerDate.value,
+          bucket: bucketSelect?.value || 'inbox',
+          projectLaneId: '',
+          priority: Number(prioritySelect?.value || 2),
+          dueDate: dueDateInput?.value || '',
         }),
       );
+      saveLocalState();
+      queueSync();
+      render();
+      quickInput.value = '';
+      if (dueDateInput) {
+        dueDateInput.value = '';
+      }
+      if (prioritySelect) {
+        prioritySelect.value = '2';
+      }
+      if (bucketSelect) {
+        bucketSelect.value = 'inbox';
+      }
+      showQuickAdd();
+    });
+  }
+
+  if (calendarForm) {
+    const hideCalendarForm = () => {
+      calendarForm.hidden = true;
+      if (calendarTextInput) {
+        calendarTextInput.value = '';
+      }
+      if (calendarTodoTitleInput) {
+        calendarTodoTitleInput.value = '';
+      }
+      if (calendarTodoDetailInput) {
+        calendarTodoDetailInput.value = '';
+      }
+      if (calendarTypeSelect) {
+        calendarTypeSelect.value = 'note';
+      }
+      applyCalendarFormMode();
+    };
+
+    calendarForm.hidden = true;
+    applyCalendarFormMode();
+    if (calendarTypeSelect) {
+      calendarTypeSelect.addEventListener('change', applyCalendarFormMode);
+    }
+    calendarForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const date = String(calendarDateInput?.value || '').trim();
+      if (!date) {
+        showToast('날짜를 선택해 주세요.', 'error');
+        if (calendarDateInput) {
+          calendarDateInput.focus();
+        }
+        return;
+      }
+
+      const itemType = isCalendarTodoMode() ? 'todo' : 'note';
+      const noteText = String(calendarTextInput?.value || '').trim();
+      const todoTitle = String(calendarTodoTitleInput?.value || '').trim();
+      const todoDetail = String(calendarTodoDetailInput?.value || '').trim();
+
+      if (itemType === 'todo') {
+        if (!todoTitle) {
+          showToast('할 일 제목을 입력해 주세요.', 'error');
+          if (calendarTodoTitleInput) {
+            calendarTodoTitleInput.focus();
+          }
+          return;
+        }
+        state.todos.unshift(
+          createTodo({
+            title: todoTitle,
+            details: todoDetail,
+            bucket: 'inbox',
+            projectLaneId: '',
+            priority: 2,
+            dueDate: date,
+          }),
+        );
+      } else {
+        if (!noteText) {
+          showToast('메모를 입력해 주세요.', 'error');
+          if (calendarTextInput) {
+            calendarTextInput.focus();
+          }
+          return;
+        }
+        state.calendarItems.unshift(createCalendarItem(date, itemType, noteText));
+      }
+
+      queueSync();
+      render();
+      if (calendarTextInput) {
+        calendarTextInput.value = '';
+      }
+      if (calendarTodoTitleInput) {
+        calendarTodoTitleInput.value = '';
+      }
+      if (calendarTodoDetailInput) {
+        calendarTodoDetailInput.value = '';
+      }
+      applyCalendarFormMode();
+      if (calendarDateInput) {
+        calendarDateInput.focus();
+      }
     });
 
-    saveLocalState();
-    queueSync();
-    todoTextarea.value = '';
-    composerDate.value = '';
-    composerPriority.value = '2';
-    todoTextarea.focus();
-    render();
-  });
-
-  openCategoryInlineBtn.addEventListener('click', () => {
-    const isHidden = inlineCategoryCreate.classList.contains('hidden');
-    const nextHidden = !isHidden;
-    inlineCategoryCreate.classList.toggle('hidden', nextHidden);
-    if (!nextHidden) {
-      newCategoryInput.focus();
-    }
-  });
-
-  cancelCategoryBtn.addEventListener('click', () => {
-    newCategoryInput.value = '';
-    inlineCategoryCreate.classList.add('hidden');
-  });
-
-  createCategoryBtn.addEventListener('click', () => {
-    const name = newCategoryInput.value.trim();
-    if (!name) {
-      return;
-    }
-
-    const exists = state.categories.find((item) => item.name === name);
-    if (exists) {
-      composerCategory.value = exists.id;
-      newCategoryInput.value = '';
-      inlineCategoryCreate.classList.add('hidden');
-      return;
-    }
-
-    const category = { id: crypto.randomUUID(), name };
-    state.categories.push(category);
-    ensureCategoryIntegrity();
-    newCategoryInput.value = '';
-    composerCategory.value = category.id;
-    inlineCategoryCreate.classList.add('hidden');
-    render();
-    queueSync();
-  });
-
-  newCategoryInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      createCategoryBtn.click();
-    }
-  });
-
-  quickForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-
-    const title = quickInput.value.trim();
-    if (!title) {
-      return;
-    }
-
-    state.todos.unshift(
-      createTodo({
-        title,
-        bucket: bucketSelect.value,
-        priority: prioritySelect.value,
-        dueDate: dueDateInput.value,
-      }),
-    );
-
-    saveLocalState();
-    queueSync();
-    quickInput.value = '';
-    dueDateInput.value = '';
-    quickInput.focus();
-    render();
-  });
-
-  calendarForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-
-    const text = calendarTextInput.value.trim();
-    const date = calendarDateInput.value;
-    if (!text || !date) {
-      return;
-    }
-
-    state.calendarItems.unshift(createCalendarItem(date, calendarTypeSelect.value, text));
-    state.selectedDate = date;
-    state.currentMonth = new Date(new Date(date).getFullYear(), new Date(date).getMonth(), 1);
-    saveLocalState();
-    queueSync();
-    calendarTextInput.value = '';
-    render();
-  });
-
-  prevMonthBtn.addEventListener('click', () => {
-    state.currentMonth = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth() - 1, 1);
-    render();
-  });
-
-  nextMonthBtn.addEventListener('click', () => {
-    state.currentMonth = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth() + 1, 1);
-    render();
-  });
-
-  authBtn.addEventListener('click', async () => {
-    if (!isServerSync) {
-      window.location.href = '/api/auth/naver';
-      return;
-    }
-
-    try {
-      await apiRequest('/auth/logout', {
-        method: 'POST',
-        headers: {
-          'x-csrf-token': getCookie('daycheck_csrf') || '',
-        },
+    [
+      calendarDateInput,
+      calendarTextInput,
+      calendarTypeSelect,
+      calendarTodoTitleInput,
+      calendarTodoDetailInput,
+    ].forEach((element) => {
+      if (!element) {
+        return;
+      }
+      element.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          hideCalendarForm();
+        }
       });
-    } catch {
-      // ignore
-    }
+    });
+  }
 
-    isServerSync = false;
-    authUser = null;
-    state.version = 0;
-    updateAuthUI();
+  if (prevMonthBtn) {
+    prevMonthBtn.addEventListener('click', () => {
+      state.currentMonth = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth() - 1, 1);
+      render();
+    });
+  }
+
+  if (nextMonthBtn) {
+    nextMonthBtn.addEventListener('click', () => {
+      state.currentMonth = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth() + 1, 1);
+      render();
+    });
+  }
+
+  if (authBtn) {
+    authBtn.addEventListener('click', async () => {
+      if (!isServerSync) {
+        window.location.href = '/api/auth/kakao';
+        return;
+      }
+
+      try {
+        await apiRequest('/auth/logout', {
+          method: 'POST',
+          headers: {
+            'x-csrf-token': getCookie('daycheck_csrf') || '',
+          },
+        });
+      } catch {
+        // ignore
+      }
+
+      isServerSync = false;
+      authUser = null;
+      state.version = 0;
+      updateAuthUI();
+    });
+  }
+}
+function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) {
+    return;
+  }
+
+  const isLocalhost =
+    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  if (!isLocalhost && window.location.protocol !== 'https:') {
+    return;
+  }
+
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
   });
 }
 
@@ -1058,6 +2386,11 @@ async function bootstrap() {
         doneLog: [...state.doneLog],
         calendarItems: [...state.calendarItems],
         categories: [...state.categories],
+        bucketLabels: { ...state.bucketLabels },
+        bucketOrder: [...state.bucketOrder],
+        bucketSizes: { ...state.bucketSizes },
+        bucketVisibility: { ...state.bucketVisibility },
+        projectLanes: [...state.projectLanes],
       };
 
       if (serverState.exists && serverState.hasData) {
@@ -1065,6 +2398,11 @@ async function bootstrap() {
         state.todos = merged.todos;
         state.doneLog = merged.doneLog;
         state.calendarItems = merged.calendarItems;
+        state.bucketLabels = normalizeBucketLabels(merged.bucketLabels);
+        state.bucketOrder = normalizeBucketOrder(merged.bucketOrder);
+        state.bucketSizes = normalizeBucketSizes(merged.bucketSizes);
+        state.bucketVisibility = normalizeBucketVisibility(merged.bucketVisibility);
+        state.projectLanes = normalizeProjectLanes(merged.projectLanes);
         state.categories = normalizeCategoryState(merged.categories);
         state.version = Number(serverState.version || 0);
       } else if (hasStoredData(localBackup)) {
@@ -1075,6 +2413,8 @@ async function bootstrap() {
 
   ensureCategoryIntegrity();
   saveLocalState();
+  ensureBucketColumns();
+  ensureBucketSelectOptions();
   registerEvents();
   updateAuthUI();
   render();
@@ -1082,13 +2422,19 @@ async function bootstrap() {
   const searchParams = new URLSearchParams(window.location.search);
   const auth = searchParams.get('auth');
   if (auth === 'error') {
-    alert('���̹� �α��� �� ������ �߻��߽��ϴ�.');
+    alert('카카오 로그인 중 오류가 발생했습니다.');
   }
 }
 
 bootstrap().catch(() => {
+  ensureBucketColumns();
+  ensureBucketSelectOptions();
   updateAuthUI();
   registerEvents();
   render();
 });
+
+registerServiceWorker();
+
+
 

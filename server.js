@@ -1,4 +1,4 @@
-﻿const express = require('express');
+const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
@@ -14,18 +14,122 @@ const PORT = Number(process.env.PORT || 4173);
 const SESSION_COOKIE = 'daycheck_session';
 const OAUTH_STATE_COOKIE = 'daycheck_oauth_state';
 const CSRF_COOKIE = 'daycheck_csrf';
+const SECURITY_EVENT_PREFIX = 'daycheck_security_event';
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 5 * 60 * 1000;
 const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 const OAUTH_REFRESH_SKEW_MS = 60 * 1000;
+const SECURITY_EVENT_LOG_PATH = process.env.SECURITY_EVENT_LOG_PATH || path.resolve(process.cwd(), 'security-events.log');
+const SECURITY_EVENTS_ENABLED = process.env.SECURITY_EVENTS_ENABLED !== 'false';
+const SESSION_ENCRYPTION_KEY_CONFIGURED = Boolean(process.env.SESSION_ENCRYPTION_KEY);
+
+function getSecureEncryptionKey() {
+  const raw = process.env.SESSION_ENCRYPTION_KEY || '';
+  if (!raw) {
+    return null;
+  }
+
+  const toBuffer = (candidate) => {
+    if (!candidate) return null;
+    const normalized = candidate.trim();
+    if (!normalized) return null;
+
+    if (/^[0-9a-fA-F]{64}$/.test(normalized)) {
+      return Buffer.from(normalized, 'hex');
+    }
+
+    const base64 = Buffer.from(normalized, 'base64');
+    if (base64.length === 32) {
+      return base64;
+    }
+
+    const utf8 = Buffer.from(normalized, 'utf8');
+    if (utf8.length === 32) {
+      return utf8;
+    }
+
+    return null;
+  };
+
+  const key = toBuffer(raw);
+  return key;
+}
+
+const SESSION_TOKEN_ENCRYPTION_KEY = getSecureEncryptionKey();
+
+function logSecurityEvent(eventCode, details = {}) {
+  if (!SECURITY_EVENTS_ENABLED) {
+    return;
+  }
+  const payload = {
+    ts: new Date().toISOString(),
+    event: eventCode,
+    ip: details.ip || null,
+    path: details.path || null,
+    method: details.method || null,
+    sessionId: details.sessionId || null,
+    userId: details.userId || null,
+    error: details.error || null,
+  };
+  const text = JSON.stringify(payload);
+
+  console.warn(`[${SECURITY_EVENT_PREFIX}] ${text}`);
+  try {
+    fs.appendFileSync(SECURITY_EVENT_LOG_PATH, `${text}\n`, 'utf8');
+  } catch {
+    // best-effort logging
+  }
+}
+
+function encryptToken(raw) {
+  if (raw == null || raw === '') {
+    return null;
+  }
+  if (!SESSION_TOKEN_ENCRYPTION_KEY) {
+    return String(raw);
+  }
+
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', SESSION_TOKEN_ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(String(raw), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  return `enc.v1:${iv.toString('base64')}.${tag.toString('base64')}.${encrypted.toString('base64')}`;
+}
+
+function decryptToken(encryptedToken) {
+  if (encryptedToken == null || encryptedToken === '') {
+    return null;
+  }
+  if (!SESSION_TOKEN_ENCRYPTION_KEY) {
+    return String(encryptedToken);
+  }
+  if (!String(encryptedToken).startsWith('enc.v1:')) {
+    return String(encryptedToken);
+  }
+
+  const tokenParts = String(encryptedToken).replace(/^enc\.v1:/, '').split('.');
+  if (tokenParts.length !== 3) {
+    return null;
+  }
+
+  try {
+    const [ivB64, tagB64, encryptedB64] = tokenParts;
+    const iv = Buffer.from(ivB64, 'base64');
+    const tag = Buffer.from(tagB64, 'base64');
+    const encrypted = Buffer.from(encryptedB64, 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', SESSION_TOKEN_ENCRYPTION_KEY, iv);
+    decipher.setAuthTag(tag);
+    const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    return decrypted.toString('utf8');
+  } catch {
+    return null;
+  }
+}
 
 const DB_PATH = path.resolve(process.cwd(), process.env.DATABASE_PATH || 'daycheck.sqlite');
 const PUBLIC_ROOT = path.resolve(process.cwd());
-
-const sessions = new Map();
-const oauthStates = new Map();
-const idempotencyStore = new Map();
 
 const DB_DIR = path.dirname(DB_PATH);
 if (!fs.existsSync(DB_DIR)) {
@@ -57,11 +161,266 @@ function get(query, params = []) {
   });
 }
 
+function all(query, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(query, params, (error, rows) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(rows || []);
+    });
+  });
+}
+
+async function ensureColumnIfMissing(tableName, columnName, columnDef) {
+  const columns = await all(`PRAGMA table_info(${tableName})`);
+  const exists = columns.some((row) => row && row.name === columnName);
+  if (!exists) {
+    await run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDef}`);
+    return true;
+  }
+  return false;
+}
+
+async function ensureUsersSchema() {
+  const created = [];
+  if (await ensureColumnIfMissing('users', 'kakao_id', 'TEXT')) {
+    created.push('kakao_id');
+  }
+  if (await ensureColumnIfMissing('users', 'nickname', 'TEXT')) {
+    created.push('nickname');
+  }
+  if (await ensureColumnIfMissing('users', 'email', 'TEXT')) {
+    created.push('email');
+  }
+  if (await ensureColumnIfMissing('users', 'profile_image', 'TEXT')) {
+    created.push('profile_image');
+  }
+  if (await ensureColumnIfMissing('users', 'last_login_at', 'TEXT')) {
+    created.push('last_login_at');
+  }
+
+  if (created.length > 0) {
+    try {
+      await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_kakao_id ON users(kakao_id)');
+    } catch {
+      // safe fallback for older sqlite versions/corrupted state
+    }
+  }
+}
+
+async function ensureStateSchemas() {
+  const userColumns = await all(`PRAGMA table_info(user_states)`);
+  if (userColumns.length > 0) {
+    await ensureColumnIfMissing('user_states', 'state_json', 'TEXT NOT NULL DEFAULT \'{}\'');
+    await ensureColumnIfMissing('user_states', 'version', 'INTEGER NOT NULL DEFAULT 1');
+    await ensureColumnIfMissing('user_states', 'updated_at', 'TEXT NOT NULL DEFAULT (datetime(\'now\'))');
+    await ensureColumnIfMissing('user_states', 'created_at', 'TEXT NOT NULL DEFAULT (datetime(\'now\'))');
+  }
+
+  const sessionColumns = await all(`PRAGMA table_info(user_sessions)`);
+  if (sessionColumns.length > 0) {
+    await ensureColumnIfMissing('user_sessions', 'kakao_access_token', 'TEXT');
+    await ensureColumnIfMissing('user_sessions', 'kakao_refresh_token', 'TEXT');
+    await ensureColumnIfMissing('user_sessions', 'kakao_token_expires_at', 'INTEGER');
+  }
+
+  const oauthColumns = await all(`PRAGMA table_info(oauth_states)`);
+  if (oauthColumns.length > 0) {
+    await ensureColumnIfMissing('oauth_states', 'ip', 'TEXT');
+  }
+
+  const idemColumns = await all(`PRAGMA table_info(idempotency_store)`);
+  if (idemColumns.length > 0) {
+    await ensureColumnIfMissing('idempotency_store', 'updated_at', 'INTEGER');
+  }
+}
+
+function getSessionRecord(sessionId) {
+  return get(
+    `
+    SELECT
+      session_id,
+      user_id,
+      csrf_token,
+      kakao_access_token,
+      kakao_refresh_token,
+      kakao_token_expires_at,
+      created_at,
+      expires_at
+    FROM user_sessions
+    WHERE session_id = ?
+  `,
+    [sessionId],
+  ).then((row) => {
+    if (!row) {
+      return null;
+    }
+
+    const accessToken = row.kakao_access_token ? decryptToken(row.kakao_access_token) : null;
+    const refreshToken = row.kakao_refresh_token ? decryptToken(row.kakao_refresh_token) : null;
+    if (row.kakao_access_token && row.kakao_access_token.startsWith('enc.v1:') && accessToken === null) {
+      logSecurityEvent('session_token_decrypt_failed', {
+        sessionId: row.session_id,
+      });
+    }
+    if (row.kakao_refresh_token && row.kakao_refresh_token.startsWith('enc.v1:') && refreshToken === null) {
+      logSecurityEvent('session_token_decrypt_failed', {
+        sessionId: row.session_id,
+      });
+    }
+
+    return {
+      sessionId: row.session_id,
+      userId: Number(row.user_id),
+      csrfToken: row.csrf_token || '',
+      kakaoAccessToken: accessToken,
+      kakaoRefreshToken: refreshToken,
+      kakaoTokenExpiresAt: row.kakao_token_expires_at == null ? null : Number(row.kakao_token_expires_at),
+      createdAt: Number(row.created_at),
+      expiresAt: Number(row.expires_at),
+    };
+  });
+}
+
+async function saveSessionRecord(sessionId, session) {
+  const now = Date.now();
+  const record = {
+    userId: Number(session.userId),
+    csrfToken: session.csrfToken || '',
+    kakaoAccessToken: session.kakaoAccessToken ? encryptToken(session.kakaoAccessToken) : null,
+    kakaoRefreshToken: session.kakaoRefreshToken ? encryptToken(session.kakaoRefreshToken) : null,
+    kakaoTokenExpiresAt: session.kakaoTokenExpiresAt || null,
+    createdAt: Number(session.createdAt || now),
+    expiresAt: Number(session.expiresAt || now + SESSION_TTL_MS),
+  };
+
+  await run(
+    `
+    INSERT INTO user_sessions (
+      session_id,
+      user_id,
+      csrf_token,
+      kakao_access_token,
+      kakao_refresh_token,
+      kakao_token_expires_at,
+      created_at,
+      expires_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id) DO UPDATE SET
+      user_id = excluded.user_id,
+      csrf_token = excluded.csrf_token,
+      kakao_access_token = excluded.kakao_access_token,
+      kakao_refresh_token = excluded.kakao_refresh_token,
+      kakao_token_expires_at = excluded.kakao_token_expires_at,
+      created_at = CASE WHEN user_sessions.created_at IS NULL THEN excluded.created_at ELSE user_sessions.created_at END,
+      expires_at = excluded.expires_at
+    `,
+    [
+      sessionId,
+      record.userId,
+      record.csrfToken,
+      record.kakaoAccessToken,
+      record.kakaoRefreshToken,
+      record.kakaoTokenExpiresAt,
+      record.createdAt,
+      record.expiresAt,
+    ],
+  );
+}
+
+async function deleteSessionRecord(sessionId) {
+  await run('DELETE FROM user_sessions WHERE session_id = ?', [sessionId]);
+}
+
+function getOauthState(state) {
+  return get(
+    `
+    SELECT state, created_at, ip
+    FROM oauth_states
+    WHERE state = ?
+  `,
+    [state],
+  ).then((row) => {
+    if (!row) {
+      return null;
+    }
+
+    return {
+      state: row.state,
+      createdAt: Number(row.created_at),
+      ip: row.ip,
+    };
+  });
+}
+
+function createOauthState(state, ip) {
+  return run(
+    `
+    INSERT OR REPLACE INTO oauth_states (state, created_at, ip)
+    VALUES (?, ?, ?)
+  `,
+    [state, Date.now(), ip || null],
+  );
+}
+
+function deleteOauthState(state) {
+  return run('DELETE FROM oauth_states WHERE state = ?', [state]);
+}
+
+function getIdempotencyEntry(key) {
+  return get(
+    `
+    SELECT idempotency_key, request_hash, response_json, expires_at
+    FROM idempotency_store
+    WHERE idempotency_key = ?
+  `,
+    [key],
+  ).then((row) => {
+    if (!row) {
+      return null;
+    }
+
+    try {
+      return {
+        key: row.idempotency_key,
+        requestHash: row.request_hash,
+        response: JSON.parse(row.response_json || '{}'),
+        expiresAt: Number(row.expires_at),
+      };
+    } catch {
+      return {
+        key: row.idempotency_key,
+        requestHash: row.request_hash,
+        response: null,
+        expiresAt: Number(row.expires_at),
+      };
+    }
+  });
+}
+
+function saveIdempotencyRecord(key, requestHash, response) {
+  const now = Date.now();
+  return run(
+    `
+    INSERT INTO idempotency_store (idempotency_key, request_hash, response_json, expires_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(idempotency_key) DO UPDATE SET
+      request_hash = excluded.request_hash,
+      response_json = excluded.response_json,
+      expires_at = excluded.expires_at
+    `,
+    [key, requestHash, JSON.stringify(response), now + IDEMPOTENCY_TTL_MS],
+  );
+}
+
 function ensureDatabase() {
   return run(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      naver_id TEXT NOT NULL UNIQUE,
+      kakao_id TEXT NOT NULL UNIQUE,
       nickname TEXT,
       email TEXT,
       profile_image TEXT,
@@ -83,7 +442,79 @@ function ensureDatabase() {
         )
       `),
     )
-    .then(() => run('CREATE INDEX IF NOT EXISTS idx_user_states_user_id ON user_states(user_id)'));
+    .then(() =>
+      run(`
+        CREATE TABLE IF NOT EXISTS user_sessions (
+          session_id TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          csrf_token TEXT NOT NULL,
+          kakao_access_token TEXT,
+          kakao_refresh_token TEXT,
+          kakao_token_expires_at INTEGER,
+          created_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL,
+          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+      `),
+    )
+    .then(() =>
+      run(`
+        CREATE TABLE IF NOT EXISTS oauth_states (
+          state TEXT PRIMARY KEY,
+          created_at INTEGER NOT NULL,
+          ip TEXT
+        )
+      `),
+    )
+    .then(() =>
+      run(`
+        CREATE TABLE IF NOT EXISTS idempotency_store (
+          idempotency_key TEXT PRIMARY KEY,
+          request_hash TEXT NOT NULL,
+          response_json TEXT NOT NULL,
+          expires_at INTEGER NOT NULL
+        )
+      `),
+    )
+    .then(() => run('CREATE INDEX IF NOT EXISTS idx_user_states_user_id ON user_states(user_id)'))
+    .then(() => run('CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at)'))
+    .then(() => run('CREATE INDEX IF NOT EXISTS idx_oauth_states_created_at ON oauth_states(created_at)'))
+    .then(() => run('CREATE INDEX IF NOT EXISTS idx_idempotency_expires_at ON idempotency_store(expires_at)'))
+    .then(() => ensureUsersSchema())
+    .then(() => ensureStateSchemas());
+}
+
+const BUCKET_KEYS = ['today', 'project', 'routine', 'inbox', 'bucket5', 'bucket6', 'bucket7', 'bucket8'];
+const DEFAULT_BUCKET_LABELS = {
+  today: '오늘',
+  project: '프로젝트',
+  routine: '루틴',
+  inbox: 'inbox',
+  bucket5: '버킷 5',
+  bucket6: '버킷 6',
+  bucket7: '버킷 7',
+  bucket8: '버킷 8',
+};
+const DEFAULT_BUCKET_VISIBILITY = {
+  today: true,
+  project: true,
+  routine: true,
+  inbox: true,
+  bucket5: false,
+  bucket6: false,
+  bucket7: false,
+  bucket8: false,
+};
+
+function hasBrokenText(value) {
+  const text = String(value || '');
+  if (!text) {
+    return false;
+  }
+  if (/[\uFFFD]/u.test(text)) {
+    return true;
+  }
+  return /\?[^\s"'`<>()[\]{}=]{1,3}/u.test(text);
 }
 
 function normalizeState(payload = {}) {
@@ -91,8 +522,17 @@ function normalizeState(payload = {}) {
   const doneLog = Array.isArray(payload.doneLog) ? payload.doneLog : [];
   const calendarItems = Array.isArray(payload.calendarItems) ? payload.calendarItems : [];
   const categoriesInput = Array.isArray(payload.categories) ? payload.categories : [];
+  const bucketLabelsInput = payload && typeof payload.bucketLabels === 'object' && payload.bucketLabels !== null ? payload.bucketLabels : {};
+  const bucketOrderInput = Array.isArray(payload?.bucketOrder) ? payload.bucketOrder : [];
+  const bucketSizesInput = payload && typeof payload.bucketSizes === 'object' && payload.bucketSizes !== null ? payload.bucketSizes : {};
+  const bucketVisibilityInput = payload && typeof payload.bucketVisibility === 'object' && payload.bucketVisibility !== null ? payload.bucketVisibility : {};
+  const projectLanesInput = Array.isArray(payload?.projectLanes) ? payload.projectLanes : [];
   const categories = categoriesInput.filter(
-    (item) => item && typeof item.id === 'string' && typeof item.name === 'string',
+    (item) =>
+      item &&
+      typeof item.id === 'string' &&
+      typeof item.name === 'string' &&
+      !hasBrokenText(item.name),
   );
 
   if (categories.length === 0) {
@@ -106,34 +546,142 @@ function normalizeState(payload = {}) {
     todos,
     doneLog,
     calendarItems,
+    bucketLabels: normalizeBucketLabels(bucketLabelsInput),
+    bucketOrder: normalizeBucketOrder(bucketOrderInput),
+    bucketSizes: normalizeBucketSizes(bucketSizesInput),
+    bucketVisibility: normalizeBucketVisibility(bucketVisibilityInput),
+    projectLanes: normalizeProjectLanes(projectLanesInput),
     categories,
   };
 }
 
-function parseNaverProfile(body) {
-  if (!body || body.resultcode !== '00' || !body.response) {
+function normalizeBucketLabels(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return BUCKET_KEYS.reduce((acc, bucket) => {
+    const raw = typeof source[bucket] === 'string' ? source[bucket].trim() : '';
+    const label = raw && !hasBrokenText(raw) ? raw : '';
+    acc[bucket] = label || DEFAULT_BUCKET_LABELS[bucket] || bucket;
+    return acc;
+  }, {});
+}
+
+function normalizeBucketOrder(input = []) {
+  const source = Array.isArray(input) ? input.filter((bucket) => BUCKET_KEYS.includes(bucket)) : [];
+  const unique = [...new Set(source)];
+  const missing = BUCKET_KEYS.filter((bucket) => !unique.includes(bucket));
+  return [...unique, ...missing];
+}
+
+function normalizeBucketSizes(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  return BUCKET_KEYS.reduce((acc, bucket) => {
+    const width = Number(source?.[bucket]?.width || 0);
+    const height = Number(source?.[bucket]?.height || 0);
+    acc[bucket] = {
+      width: Number.isFinite(width) && width >= 220 ? Math.round(width) : 0,
+      height: Number.isFinite(height) && height >= 220 ? Math.round(height) : 0,
+    };
+    return acc;
+  }, {});
+}
+
+function normalizeBucketVisibility(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const visibility = BUCKET_KEYS.reduce((acc, bucket) => {
+    acc[bucket] =
+      typeof source[bucket] === 'boolean'
+        ? source[bucket]
+        : DEFAULT_BUCKET_VISIBILITY[bucket] !== false;
+    return acc;
+  }, {});
+
+  if (!BUCKET_KEYS.some((bucket) => visibility[bucket] !== false)) {
+    visibility.today = true;
+  }
+  return visibility;
+}
+
+function normalizeProjectLanes(input = []) {
+  const source = Array.isArray(input) ? input : [];
+  const ids = new Set();
+  const normalized = [];
+
+  source.forEach((lane) => {
+    if (!lane || typeof lane !== 'object') {
+      return;
+    }
+    const id = typeof lane.id === 'string' && lane.id.trim() ? lane.id.trim() : crypto.randomUUID();
+    if (ids.has(id)) {
+      return;
+    }
+
+    const name = typeof lane.name === 'string' ? lane.name.trim().slice(0, 30) : '';
+    if (!name) {
+      return;
+    }
+    if (hasBrokenText(name)) {
+      return;
+    }
+    const bucket = typeof lane.bucket === 'string' && BUCKET_KEYS.includes(lane.bucket) ? lane.bucket : 'project';
+    const duplicated = normalized.some(
+      (item) => item.bucket === bucket && item.name.toLowerCase() === name.toLowerCase(),
+    );
+    if (duplicated) {
+      return;
+    }
+
+    const categoryId = typeof lane.categoryId === 'string' && lane.categoryId.trim() ? lane.categoryId.trim() : '';
+    const width = Number(lane.width || 0);
+    const height = Number(lane.height || 0);
+
+    ids.add(id);
+    normalized.push({
+      id,
+      name,
+      bucket,
+      categoryId,
+      width: Number.isFinite(width) && width >= 220 ? Math.round(width) : 0,
+      height: Number.isFinite(height) && height >= 220 ? Math.round(height) : 0,
+    });
+  });
+
+  return normalized;
+}
+
+function parseKakaoProfile(body) {
+  if (!body || !body.id) {
     return null;
   }
 
-  const response = body.response;
-  const naverId = String(response.id || '').trim();
-  if (!naverId) {
+  const kakaoAccount = body.kakao_account || {};
+  const properties = body.properties || {};
+  const profile = kakaoAccount.profile || properties;
+
+  const kakaoId = String(body.id).trim();
+  if (!kakaoId) {
     return null;
   }
+
+  const nickname = profile.nickname || profile.nickName || kakaoAccount.profile_nickname || null;
+  const profileImage = profile.profile_image_url
+    ? String(profile.profile_image_url)
+    : profile.thumbnail_image_url
+      ? String(profile.thumbnail_image_url)
+      : null;
 
   return {
-    naverId,
-    nickname: response.nickname ? String(response.nickname) : null,
-    email: response.email ? String(response.email) : null,
-    profileImage: response.profile_image ? String(response.profile_image) : null,
+    kakaoId,
+    nickname: nickname ? String(nickname) : null,
+    email: kakaoAccount.email ? String(kakaoAccount.email) : null,
+    profileImage,
   };
 }
 
 function getRedirectUri(req) {
-  if (process.env.NAVER_REDIRECT_URI) {
-    return process.env.NAVER_REDIRECT_URI;
+  if (process.env.KAKAO_REDIRECT_URI) {
+    return process.env.KAKAO_REDIRECT_URI;
   }
-  return `${req.protocol}://${req.get('host')}/api/auth/naver/callback`;
+  return `${req.protocol}://${req.get('host')}/api/auth/kakao/callback`;
 }
 
 function generateRandomToken() {
@@ -217,56 +765,86 @@ function isStateValid(record) {
   return !!record && !!record.createdAt && Date.now() - record.createdAt <= OAUTH_STATE_TTL_MS;
 }
 
-function cleanupExpiredStates() {
+async function cleanupExpiredStates() {
   const cutoff = Date.now() - OAUTH_STATE_TTL_MS;
-  for (const [state, entry] of oauthStates.entries()) {
-    if (entry.createdAt < cutoff) {
-      oauthStates.delete(state);
-    }
-  }
+  await run('DELETE FROM oauth_states WHERE created_at < ?', [cutoff]);
 }
 
-function cleanupExpiredSessions() {
-  const now = Date.now();
-  for (const [sessionId, session] of sessions.entries()) {
-    if (session.expiresAt <= now) {
-      sessions.delete(sessionId);
-    }
-  }
+async function cleanupExpiredSessions() {
+  await run('DELETE FROM user_sessions WHERE expires_at <= ?', [Date.now()]);
 }
 
-function cleanupIdempotencyStore() {
-  const now = Date.now();
-  for (const [key, entry] of idempotencyStore.entries()) {
-    if (entry.expiresAt <= now) {
-      idempotencyStore.delete(key);
-    }
-  }
+async function cleanupIdempotencyStore() {
+  await run('DELETE FROM idempotency_store WHERE expires_at <= ?', [Date.now()]);
 }
 
 async function loadUserById(userId) {
   return get(
-    'SELECT id, naver_id, nickname, email, profile_image, last_login_at FROM users WHERE id = ?',
+    'SELECT id, kakao_id, nickname, email, profile_image, last_login_at FROM users WHERE id = ?',
     [userId],
   );
 }
 
 async function upsertUser(profile) {
-  await run(
-    `INSERT INTO users (naver_id, nickname, email, profile_image, updated_at, last_login_at)
-     VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-     ON CONFLICT(naver_id)
-     DO UPDATE SET
-       nickname = excluded.nickname,
-       email = excluded.email,
-       profile_image = excluded.profile_image,
-       updated_at = datetime('now'),
-       last_login_at = datetime('now')`,
-    [profile.naverId, profile.nickname, profile.email, profile.profileImage],
-  );
+  const columns = await all('PRAGMA table_info(users)');
+  const hasNaverId = columns.some((column) => column?.name === 'naver_id');
 
-  return get('SELECT id, naver_id, nickname, email, profile_image FROM users WHERE naver_id = ?', [
-    profile.naverId,
+  const attempts = hasNaverId
+    ? [
+        {
+          sql: `INSERT INTO users (naver_id, kakao_id, nickname, email, profile_image, updated_at, last_login_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+                ON CONFLICT(kakao_id)
+                DO UPDATE SET
+                  nickname = excluded.nickname,
+                  email = excluded.email,
+                  profile_image = excluded.profile_image,
+                  updated_at = datetime('now'),
+                  last_login_at = datetime('now')`,
+          params: [`kakao-${profile.kakaoId}`, profile.kakaoId, profile.nickname, profile.email, profile.profileImage],
+        },
+      ]
+    : [];
+
+  attempts.push({
+    sql: `INSERT INTO users (kakao_id, nickname, email, profile_image, updated_at, last_login_at)
+          VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+          ON CONFLICT(kakao_id)
+          DO UPDATE SET
+            nickname = excluded.nickname,
+            email = excluded.email,
+            profile_image = excluded.profile_image,
+            updated_at = datetime('now'),
+            last_login_at = datetime('now')`,
+    params: [profile.kakaoId, profile.nickname, profile.email, profile.profileImage],
+  });
+
+  let failedAttempt = false;
+  for (let i = 0; i < attempts.length; i++) {
+    try {
+      await run(attempts[i].sql, attempts[i].params);
+      failedAttempt = false;
+      break;
+    } catch (error) {
+      const message = error && error.message ? String(error.message) : '';
+      const isRetryable =
+        message.includes('no column named kakao_id') ||
+        message.includes('no column named naver_id') ||
+        message.includes('NOT NULL constraint failed: users.naver_id');
+      if (i < attempts.length - 1 && isRetryable) {
+        failedAttempt = true;
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  if (failedAttempt) {
+    // Should not happen; if it does, fall through to preserve current behavior.
+  }
+
+  return get('SELECT id, kakao_id, nickname, email, profile_image FROM users WHERE kakao_id = ?', [
+    profile.kakaoId,
   ]);
 }
 
@@ -294,11 +872,30 @@ async function getStateRow(userId) {
   }
 
   const normalized = normalizeState(parsed);
+  const defaultBucketLabels = { ...DEFAULT_BUCKET_LABELS };
+  const defaultBucketOrder = [...BUCKET_KEYS];
+  const defaultBucketVisibility = { ...DEFAULT_BUCKET_VISIBILITY };
+  const hasCustomBucketLabels = Object.keys(defaultBucketLabels).some(
+    (bucket) => normalized.bucketLabels?.[bucket] !== defaultBucketLabels[bucket],
+  );
+  const hasCustomBucketOrder = normalized.bucketOrder.some((bucket, index) => bucket !== defaultBucketOrder[index]);
+  const hasCustomBucketSizes = Object.values(normalized.bucketSizes || {}).some(
+    (size) => Number(size?.width || 0) > 0 || Number(size?.height || 0) > 0,
+  );
+  const hasCustomBucketVisibility = Object.keys(defaultBucketVisibility).some(
+    (bucket) => normalized.bucketVisibility?.[bucket] !== defaultBucketVisibility[bucket],
+  );
+  const hasProjectLanes = Array.isArray(normalized.projectLanes) && normalized.projectLanes.length > 0;
   const hasData =
     normalized.todos.length > 0 ||
     normalized.doneLog.length > 0 ||
     normalized.calendarItems.length > 0 ||
-    normalized.categories.length > 1;
+    normalized.categories.length > 1 ||
+    hasCustomBucketLabels ||
+    hasCustomBucketOrder ||
+    hasCustomBucketSizes ||
+    hasCustomBucketVisibility ||
+    hasProjectLanes;
 
   return {
     state: normalized,
@@ -309,28 +906,28 @@ async function getStateRow(userId) {
   };
 }
 
-async function refreshNaverAccessTokenIfNeeded(sessionId, session) {
-  if (!session || !session.naverRefreshToken) {
-    return;
+async function refreshKakaoAccessTokenIfNeeded(session) {
+  if (!session || !session.kakaoRefreshToken) {
+    return session;
   }
 
-  if (!session.naverTokenExpiresAt || session.naverTokenExpiresAt - Date.now() > OAUTH_REFRESH_SKEW_MS) {
-    return;
+  if (!session.kakaoTokenExpiresAt || session.kakaoTokenExpiresAt - Date.now() > OAUTH_REFRESH_SKEW_MS) {
+    return session;
   }
 
-  if (!process.env.NAVER_CLIENT_ID || !process.env.NAVER_CLIENT_SECRET) {
-    return;
+  if (!process.env.KAKAO_CLIENT_ID || !process.env.KAKAO_CLIENT_SECRET) {
+    return session;
   }
 
   try {
     const refreshParams = new URLSearchParams({
       grant_type: 'refresh_token',
-      client_id: process.env.NAVER_CLIENT_ID,
-      client_secret: process.env.NAVER_CLIENT_SECRET,
-      refresh_token: session.naverRefreshToken,
+      client_id: process.env.KAKAO_CLIENT_ID,
+      client_secret: process.env.KAKAO_CLIENT_SECRET,
+      refresh_token: session.kakaoRefreshToken,
     });
 
-    const response = await fetch('https://nid.naver.com/oauth2.0/token', {
+    const response = await fetch('https://kauth.kakao.com/oauth/token', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
@@ -347,64 +944,87 @@ async function refreshNaverAccessTokenIfNeeded(sessionId, session) {
       return;
     }
 
-    const updated = {
+    return {
       ...session,
-      naverAccessToken: data.access_token,
-      naverRefreshToken: data.refresh_token || session.naverRefreshToken,
-      naverTokenExpiresAt:
-        Number(data.expires_in || 0) > 0 ? Date.now() + Number(data.expires_in) * 1000 : session.naverTokenExpiresAt,
+      kakaoAccessToken: data.access_token,
+      kakaoRefreshToken: data.refresh_token || session.kakaoRefreshToken,
+      kakaoTokenExpiresAt:
+        Number(data.expires_in || 0) > 0 ? Date.now() + Number(data.expires_in) * 1000 : session.kakaoTokenExpiresAt,
     };
-
-    sessions.set(sessionId, updated);
-  } catch {
-    // ignore refresh failures; app session can continue without naver token refresh.
+  } catch (error) {
+    logSecurityEvent('oauth_token_refresh_failed', {
+      userId: session.userId || null,
+      error: error && error.message ? error.message : String(error),
+    });
+    // ignore refresh failures; app session can continue without kakao token refresh.
   }
+  return session;
 }
 
-function authSessionMiddleware(req, res, next) {
-  const rawCookie = req.cookies?.[SESSION_COOKIE];
-  const sessionId = parseSignedSessionCookie(rawCookie);
+async function authSessionMiddleware(req, res, next) {
+  try {
+    const rawCookie = req.cookies?.[SESSION_COOKIE];
+    const sessionId = parseSignedSessionCookie(rawCookie);
 
-  if (rawCookie && !sessionId) {
-    res.clearCookie(SESSION_COOKIE);
-    res.clearCookie(CSRF_COOKIE);
-    res.locals.userSession = null;
-    next();
-    return;
-  }
-
-  const session = sessionId ? sessions.get(sessionId) : null;
-
-  if (!session || session.expiresAt <= Date.now()) {
-    if (sessionId && session) {
-      sessions.delete(sessionId);
-    }
-    if (sessionId || rawCookie) {
+    if (rawCookie && !sessionId) {
+      logSecurityEvent('invalid_session_cookie', { ip: req.ip, path: req.path, method: req.method });
       res.clearCookie(SESSION_COOKIE);
       res.clearCookie(CSRF_COOKIE);
+      res.locals.userSession = null;
+      next();
+      return;
     }
-    res.locals.userSession = null;
-    next();
-    return;
-  }
 
-  session.expiresAt = Date.now() + SESSION_TTL_MS;
-  refreshNaverAccessTokenIfNeeded(sessionId, session).catch(() => {});
-  res.locals.userSession = {
-    ...session,
-    sessionId,
-  };
-  next();
+    let session = sessionId ? await getSessionRecord(sessionId) : null;
+
+    if (!session || session.expiresAt <= Date.now()) {
+      if (sessionId && session) {
+        await deleteSessionRecord(sessionId);
+        logSecurityEvent('session_expired', {
+          sessionId,
+          ip: req.ip,
+          path: req.path,
+          method: req.method,
+          userId: session.userId || null,
+        });
+      }
+      if (sessionId || rawCookie) {
+        res.clearCookie(SESSION_COOKIE);
+        res.clearCookie(CSRF_COOKIE);
+      }
+      res.locals.userSession = null;
+      next();
+      return;
+    }
+
+    session = await refreshKakaoAccessTokenIfNeeded(session);
+    session.expiresAt = Date.now() + SESSION_TTL_MS;
+    await saveSessionRecord(sessionId, session);
+    res.locals.userSession = {
+      ...session,
+      sessionId,
+    };
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
 
 function requireAuth(req, res, next) {
   if (!res.locals.userSession) {
+    logSecurityEvent('unauthorized_access', {
+      ip: req.ip,
+      path: req.path,
+      method: req.method,
+      sessionId: parseSignedSessionCookie(req.cookies?.[SESSION_COOKIE]),
+    });
     res.status(401).json({ error: 'unauthorized' });
     return;
   }
 
   req.auth = {
     userId: res.locals.userSession.userId,
+    sessionId: res.locals.userSession.sessionId || null,
     csrfToken: res.locals.userSession.csrfToken || '',
   };
   next();
@@ -416,6 +1036,13 @@ function validateCsrf(req, res, next) {
   const expected = req.auth.csrfToken;
 
   if (!expected || !headerToken || !cookieToken || headerToken !== expected || cookieToken !== expected) {
+    logSecurityEvent('invalid_csrf_token', {
+      ip: req.ip,
+      path: req.path,
+      method: req.method,
+      sessionId: req.auth.sessionId || null,
+      userId: req.auth.userId || null,
+    });
     res.status(403).json({ error: 'invalid_csrf_token' });
     return;
   }
@@ -426,21 +1053,23 @@ function validateCsrf(req, res, next) {
 function createAuthRouter() {
   const router = express.Router();
 
-  function startNaverLogin(req, res) {
-    if (!process.env.NAVER_CLIENT_ID || !process.env.NAVER_CLIENT_SECRET) {
+  async function startKakaoLogin(req, res) {
+    if (!process.env.KAKAO_CLIENT_ID || !process.env.KAKAO_CLIENT_SECRET) {
+      logSecurityEvent('oauth_not_configured', {
+        ip: req.ip,
+        path: req.path,
+        method: req.method,
+      });
       res.status(500).json({ error: 'oauth_not_configured' });
       return;
     }
 
     const state = generateRandomToken();
-    oauthStates.set(state, {
-      createdAt: Date.now(),
-      ip: req.ip,
-    });
+    await createOauthState(state, req.ip);
 
-    const authorizeUrl = new URL('https://nid.naver.com/oauth2.0/authorize');
+    const authorizeUrl = new URL('https://kauth.kakao.com/oauth/authorize');
     authorizeUrl.searchParams.set('response_type', 'code');
-    authorizeUrl.searchParams.set('client_id', process.env.NAVER_CLIENT_ID);
+    authorizeUrl.searchParams.set('client_id', process.env.KAKAO_CLIENT_ID);
     authorizeUrl.searchParams.set('redirect_uri', getRedirectUri(req));
     authorizeUrl.searchParams.set('state', state);
 
@@ -457,7 +1086,7 @@ function createAuthRouter() {
 
     const user = await loadUserById(res.locals.userSession.userId);
     if (!user) {
-      sessions.delete(res.locals.userSession.sessionId);
+      await deleteSessionRecord(res.locals.userSession.sessionId);
       res.clearCookie(SESSION_COOKIE);
       res.clearCookie(CSRF_COOKIE);
       res.json({ authenticated: false });
@@ -468,7 +1097,7 @@ function createAuthRouter() {
       authenticated: true,
       user: {
         id: user.id,
-        naverId: user.naver_id,
+        kakaoId: user.kakao_id,
         nickname: user.nickname,
         email: user.email,
         profileImage: user.profile_image,
@@ -477,45 +1106,62 @@ function createAuthRouter() {
     });
   });
 
-  router.get('/naver', authSessionMiddleware, startNaverLogin);
-  router.get('/naver/login', authSessionMiddleware, startNaverLogin);
+  router.get('/kakao', authSessionMiddleware, startKakaoLogin);
+  router.get('/kakao/login', authSessionMiddleware, startKakaoLogin);
 
-  router.get('/naver/callback', async (req, res) => {
+  router.get('/kakao/callback', async (req, res) => {
     const { code, state, error: oauthError } = req.query;
 
     if (oauthError) {
+      logSecurityEvent('oauth_callback_error_param', {
+        ip: req.ip,
+        path: req.path,
+        method: req.method,
+        error: String(oauthError),
+      });
       res.redirect('/?auth=denied');
       return;
     }
 
     if (!code || !state) {
+      logSecurityEvent('oauth_callback_missing_params', {
+        ip: req.ip,
+        path: req.path,
+        method: req.method,
+      });
       res.status(400).send('invalid_callback');
       return;
     }
 
     const cookieState = req.cookies?.[OAUTH_STATE_COOKIE];
-    const savedState = oauthStates.get(String(state));
+    const savedState = await getOauthState(String(state));
 
     if (!cookieState || String(cookieState) !== String(state) || !isStateValid(savedState)) {
+      logSecurityEvent('oauth_state_invalid', {
+        ip: req.ip,
+        path: req.path,
+        method: req.method,
+        error: `cookieState=${String(cookieState || '')}, isValid=${isStateValid(savedState)}`,
+      });
       res.clearCookie(OAUTH_STATE_COOKIE);
       res.status(403).send('invalid_state');
       return;
     }
 
-    oauthStates.delete(String(state));
+    await deleteOauthState(String(state));
     res.clearCookie(OAUTH_STATE_COOKIE);
 
     try {
       const tokenParams = new URLSearchParams({
         grant_type: 'authorization_code',
-        client_id: process.env.NAVER_CLIENT_ID,
-        client_secret: process.env.NAVER_CLIENT_SECRET,
+        client_id: process.env.KAKAO_CLIENT_ID,
+        client_secret: process.env.KAKAO_CLIENT_SECRET,
         code: String(code),
-        state: String(state),
+  
         redirect_uri: getRedirectUri(req),
       });
 
-      const tokenResponse = await fetch('https://nid.naver.com/oauth2.0/token', {
+      const tokenResponse = await fetch('https://kauth.kakao.com/oauth/token', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
@@ -527,14 +1173,15 @@ function createAuthRouter() {
         throw new Error(tokenData.error_description || tokenData.error || 'token_exchange_failed');
       }
 
-      const profileResponse = await fetch('https://openapi.naver.com/v1/nid/me', {
+      const profileResponse = await fetch('https://kapi.kakao.com/v2/user/me', {
         headers: {
           Authorization: `Bearer ${tokenData.access_token}`,
         },
       });
       const profileBody = await profileResponse.json();
-      const profile = parseNaverProfile(profileBody);
+      const profile = parseKakaoProfile(profileBody);
       if (!profile) {
+        logSecurityEvent('oauth_invalid_profile', { ip: req.ip, path: req.path, method: req.method });
         throw new Error('invalid_profile');
       }
 
@@ -543,12 +1190,12 @@ function createAuthRouter() {
       const csrfToken = generateRandomToken();
       const now = Date.now();
 
-      sessions.set(sessionId, {
+      await saveSessionRecord(sessionId, {
         id: sessionId,
         userId: user.id,
-        naverAccessToken: tokenData.access_token,
-        naverRefreshToken: tokenData.refresh_token || null,
-        naverTokenExpiresAt:
+        kakaoAccessToken: tokenData.access_token,
+        kakaoRefreshToken: tokenData.refresh_token || null,
+        kakaoTokenExpiresAt:
           Number(tokenData.expires_in || 0) > 0 ? now + Number(tokenData.expires_in) * 1000 : null,
         csrfToken,
         createdAt: now,
@@ -560,34 +1207,32 @@ function createAuthRouter() {
       res.cookie(CSRF_COOKIE, csrfToken, csrfCookieSettings(isProd));
       res.redirect(process.env.AUTH_SUCCESS_REDIRECT || '/?auth=success');
     } catch (error) {
+      logSecurityEvent('oauth_callback_failed', {
+        ip: req.ip,
+        path: req.path,
+        method: req.method,
+        error: error && error.message ? error.message : String(error),
+      });
       console.error('oauth_callback_error', error && error.message ? error.message : error);
       res.redirect('/?auth=error');
     }
   });
 
-  router.post('/logout', authSessionMiddleware, (req, res) => {
+  router.post('/logout', authSessionMiddleware, async (req, res) => {
     const sessionId = res.locals.userSession?.sessionId || parseSignedSessionCookie(req.cookies?.[SESSION_COOKIE]);
-    const session = sessionId ? sessions.get(sessionId) : null;
+    const session = sessionId ? await getSessionRecord(sessionId) : null;
 
-    if (
-      session &&
-      session.naverAccessToken &&
-      process.env.NAVER_CLIENT_ID &&
-      process.env.NAVER_CLIENT_SECRET
-    ) {
-      const revokeParams = new URLSearchParams({
-        grant_type: 'delete',
-        client_id: process.env.NAVER_CLIENT_ID,
-        client_secret: process.env.NAVER_CLIENT_SECRET,
-        access_token: session.naverAccessToken,
-        service_provider: 'NAVER',
-      });
-
-      fetch(`https://nid.naver.com/oauth2.0/token?${revokeParams.toString()}`).catch(() => {});
+    if (session && session.kakaoAccessToken) {
+      fetch('https://kapi.kakao.com/v1/user/unlink', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.kakaoAccessToken}`,
+        },
+      }).catch(() => {});
     }
 
     if (sessionId) {
-      sessions.delete(sessionId);
+      await deleteSessionRecord(sessionId);
     }
 
     res.clearCookie(SESSION_COOKIE);
@@ -626,7 +1271,7 @@ function createStateRouter() {
       : '';
 
     if (idempotencyKey) {
-      const previous = idempotencyStore.get(idemStoreKey);
+      const previous = await getIdempotencyEntry(idemStoreKey);
       if (previous && previous.expiresAt > Date.now()) {
         if (previous.requestHash !== requestHash) {
           res.status(409).json({ error: 'idempotency_key_reuse' });
@@ -668,11 +1313,7 @@ function createStateRouter() {
     };
 
     if (idempotencyKey) {
-      idempotencyStore.set(idemStoreKey, {
-        requestHash,
-        response: responsePayload,
-        expiresAt: Date.now() + IDEMPOTENCY_TTL_MS,
-      });
+      await saveIdempotencyRecord(idemStoreKey, requestHash, responsePayload);
     }
 
     res.json(responsePayload);
@@ -766,16 +1407,34 @@ ensureDatabase()
       return;
     }
 
-    if (!process.env.NAVER_CLIENT_ID || !process.env.NAVER_CLIENT_SECRET) {
+    if (!process.env.KAKAO_CLIENT_ID || !process.env.KAKAO_CLIENT_SECRET) {
       const level = isProd ? 'error' : 'warn';
       console[level](
-        '[security] NAVER_CLIENT_ID or NAVER_CLIENT_SECRET is not configured. OAuth endpoints will fail.',
+        '[security] KAKAO_CLIENT_ID or KAKAO_CLIENT_SECRET is not configured. OAuth endpoints will fail.',
       );
     }
+    if (SESSION_ENCRYPTION_KEY_CONFIGURED && !SESSION_TOKEN_ENCRYPTION_KEY) {
+      console.error('[security] SESSION_ENCRYPTION_KEY is set but invalid. Must be 32-byte base64/hex/utf8 string.');
+      if (isProd) {
+        process.exit(1);
+        return;
+      }
+    }
+    if (SESSION_TOKEN_ENCRYPTION_KEY) {
+      console.log('[security] Session token encryption enabled for OAuth tokens.');
+    } else {
+      console.warn('[security] Session token encryption disabled. Configure SESSION_ENCRYPTION_KEY for production.');
+    }
 
-    setInterval(cleanupExpiredStates, 60 * 1000);
-    setInterval(cleanupExpiredSessions, 60 * 1000);
-    setInterval(cleanupIdempotencyStore, 60 * 1000);
+    setInterval(() => {
+      cleanupExpiredStates().catch(() => {});
+    }, 60 * 1000);
+    setInterval(() => {
+      cleanupExpiredSessions().catch(() => {});
+    }, 60 * 1000);
+    setInterval(() => {
+      cleanupIdempotencyStore().catch(() => {});
+    }, 60 * 1000);
 
     app.listen(PORT, () => {
       console.log(`day-check server listening on http://localhost:${PORT}`);
@@ -785,4 +1444,6 @@ ensureDatabase()
     console.error('Failed to initialize database', error);
     process.exit(1);
   });
+
+
 

@@ -1,0 +1,6 @@
+{"ts":"2026-02-18T08:50:52.353Z","event":"oauth_callback_failed","ip":"::1","path":"/kakao/callback","method":"GET","sessionId":null,"userId":null,"error":"SQLITE_ERROR: table users has no column named kakao_id"}
+{"ts":"2026-02-18T08:50:54.924Z","event":"oauth_callback_failed","ip":"::1","path":"/kakao/callback","method":"GET","sessionId":null,"userId":null,"error":"SQLITE_ERROR: table users has no column named kakao_id"}
+{"ts":"2026-02-18T08:51:04.334Z","event":"oauth_callback_failed","ip":"::1","path":"/kakao/callback","method":"GET","sessionId":null,"userId":null,"error":"SQLITE_ERROR: table users has no column named kakao_id"}
+{"ts":"2026-02-18T08:53:39.671Z","event":"oauth_callback_failed","ip":"::1","path":"/kakao/callback","method":"GET","sessionId":null,"userId":null,"error":"SQLITE_CONSTRAINT: NOT NULL constraint failed: users.naver_id"}
+{"ts":"2026-02-18T08:53:42.133Z","event":"oauth_callback_failed","ip":"::1","path":"/kakao/callback","method":"GET","sessionId":null,"userId":null,"error":"SQLITE_CONSTRAINT: NOT NULL constraint failed: users.naver_id"}
+{"ts":"2026-02-18T08:53:44.573Z","event":"oauth_callback_failed","ip":"::1","path":"/kakao/callback","method":"GET","sessionId":null,"userId":null,"error":"SQLITE_CONSTRAINT: NOT NULL constraint failed: users.naver_id"}
