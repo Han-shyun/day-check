@@ -2367,6 +2367,16 @@ function renderCalendar() {
           if (entry.rangePosition !== 'start') {
             li.classList.add('is-range-continuation');
           }
+          const isWeekStart = currentDate.getDay() === 1;
+          const isWeekEnd = currentDate.getDay() === 0;
+          const isMonthStart = dayNumber === 1;
+          const isMonthEnd = dayNumber === dayCount;
+          if (entry.rangePosition !== 'start' && (isWeekStart || isMonthStart)) {
+            li.classList.add('is-range-row-start');
+          }
+          if (entry.rangePosition !== 'end' && (isWeekEnd || isMonthEnd)) {
+            li.classList.add('is-range-row-end');
+          }
         }
 
         const badge = document.createElement('span');
@@ -2950,6 +2960,5 @@ bootstrap().catch(() => {
 });
 
 registerServiceWorker();
-
 
 
