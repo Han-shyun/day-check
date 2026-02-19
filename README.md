@@ -94,6 +94,43 @@ https://yourname.github.io/day-check/
 - 변경 반영 후 재시작: `npm run server:restart`
 - 운영 시작: `npm run server:start`
 
+## 자동 배포(서버 연동)
+
+로컬에서 프로젝트를 수정하면 GitHub에 `main` 또는 `work` 브랜치 푸시만으로
+자동으로 서버(`168.107.48.248`)로 반영되게 구성할 수 있습니다.
+
+### GitHub Secrets 설정
+
+레포지토리 `Settings > Secrets and variables > Actions`에 다음을 추가합니다.
+
+- `SERVER_SSH_PRIVATE_KEY`
+- `SERVER_HOST` (예: `168.107.48.248`)
+- `SERVER_USER` (예: `ubuntu`)
+- `SERVER_APP_PATH` (예: `/home/ubuntu/day-check`)
+- `SERVER_SSH_PORT` (선택, 기본값 `22`)
+
+### 서버 준비
+
+서버에 배포 키를 등록하고, `SERVER_APP_PATH` 경로에 앱 권한이 있는지 확인합니다.  
+`package.json`, `package-lock.json`, `server.js`가 위치한 디렉터리에서
+`scripts/deploy-server.sh`가 실행 가능해야 합니다.
+
+### 배포 동작
+
+`push` 이벤트가 발생하면 다음이 자동 실행됩니다.
+
+1. `.git`, `node_modules`, `.env`, `server.log`, `security-events.log` 등은 제외하고 코드 동기화
+2. 서버에서 `npm ci --omit=dev`
+3. 기존 `node server.js` 종료 후 재실행
+
+수동 실행은 로컬에서 워크플로를 `workflow_dispatch`로 실행하거나,
+서버에 SSH로 접속해 아래를 실행할 수 있습니다.
+
+```bash
+cd /home/ubuntu/day-check
+bash scripts/deploy-server.sh
+```
+
 `server:restart`는 현재 실행 중인 `server.js` 프로세스를 정리한 뒤, 개발 모드로 다시 띄웁니다.
 
 ## 환경변수

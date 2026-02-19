@@ -9,6 +9,7 @@ const path = require('path');
 require('dotenv').config();
 
 const app = express();
+app.set('trust proxy', 'loopback');
 const PORT = Number(process.env.PORT || 4173);
 
 const SESSION_COOKIE = 'daycheck_session';
@@ -30,6 +31,7 @@ const HOLIDAY_FEED_URL =
   process.env.HOLIDAY_FEED_URL || process.env.NAVER_HOLIDAY_FEED_URL || HOLIDAY_FALLBACK_FEED_URL;
 const HOLIDAY_CACHE = new Map();
 const HOLIDAY_FETCH_INFLIGHT = new Map();
+let USERS_REQUIRE_NAVER_ID = false;
 
 function getSecureEncryptionKey() {
   const raw = process.env.SESSION_ENCRYPTION_KEY || '';
@@ -534,6 +536,10 @@ async function ensureUsersSchema() {
       // safe fallback for older sqlite versions/corrupted state
     }
   }
+
+  const columns = await all(`PRAGMA table_info(users)`);
+  const legacyNaverIdColumn = columns.find((row) => row && row.name === 'naver_id');
+  USERS_REQUIRE_NAVER_ID = Boolean(legacyNaverIdColumn && Number(legacyNaverIdColumn.notnull) === 1);
 }
 
 async function ensureStateSchemas() {
@@ -819,6 +825,10 @@ const DEFAULT_BUCKET_VISIBILITY = BUCKET_KEYS.reduce((acc, bucket, index) => {
   acc[bucket] = index < 4;
   return acc;
 }, {});
+const DEFAULT_USER_PROFILE = Object.freeze({
+  nickname: '',
+  honorific: '님',
+});
 
 function hasBrokenText(value) {
   const text = String(value || '');
@@ -838,9 +848,9 @@ function normalizeState(payload = {}) {
   const categoriesInput = Array.isArray(payload.categories) ? payload.categories : [];
   const bucketLabelsInput = payload && typeof payload.bucketLabels === 'object' && payload.bucketLabels !== null ? payload.bucketLabels : {};
   const bucketOrderInput = Array.isArray(payload?.bucketOrder) ? payload.bucketOrder : [];
-  const bucketSizesInput = payload && typeof payload.bucketSizes === 'object' && payload.bucketSizes !== null ? payload.bucketSizes : {};
   const bucketVisibilityInput = payload && typeof payload.bucketVisibility === 'object' && payload.bucketVisibility !== null ? payload.bucketVisibility : {};
   const projectLanesInput = Array.isArray(payload?.projectLanes) ? payload.projectLanes : [];
+  const userProfileInput = payload && typeof payload.userProfile === 'object' && payload.userProfile !== null ? payload.userProfile : {};
   const categories = categoriesInput.filter(
     (item) =>
       item &&
@@ -862,10 +872,23 @@ function normalizeState(payload = {}) {
     calendarItems,
     bucketLabels: normalizeBucketLabels(bucketLabelsInput),
     bucketOrder: normalizeBucketOrder(bucketOrderInput),
-    bucketSizes: normalizeBucketSizes(bucketSizesInput),
     bucketVisibility: normalizeBucketVisibility(bucketVisibilityInput),
     projectLanes: normalizeProjectLanes(projectLanesInput),
     categories,
+    userProfile: normalizeUserProfile(userProfileInput),
+  };
+}
+
+function normalizeUserProfile(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const nicknameRaw = typeof source.nickname === 'string' ? source.nickname.trim() : '';
+  const honorificRaw = typeof source.honorific === 'string' ? source.honorific.trim() : '';
+  const nickname = nicknameRaw.slice(0, 20);
+  const honorific = (honorificRaw || DEFAULT_USER_PROFILE.honorific).slice(0, 12);
+
+  return {
+    nickname,
+    honorific: honorific || DEFAULT_USER_PROFILE.honorific,
   };
 }
 
@@ -884,19 +907,6 @@ function normalizeBucketOrder(input = []) {
   const unique = [...new Set(source)];
   const missing = BUCKET_KEYS.filter((bucket) => !unique.includes(bucket));
   return [...unique, ...missing];
-}
-
-function normalizeBucketSizes(input = {}) {
-  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  return BUCKET_KEYS.reduce((acc, bucket) => {
-    const width = Number(source?.[bucket]?.width || 0);
-    const height = Number(source?.[bucket]?.height || 0);
-    acc[bucket] = {
-      width: Number.isFinite(width) && width >= 220 ? Math.round(width) : 0,
-      height: Number.isFinite(height) && height >= 220 ? Math.round(height) : 0,
-    };
-    return acc;
-  }, {});
 }
 
 function normalizeBucketVisibility(input = {}) {
@@ -995,7 +1005,14 @@ function getRedirectUri(req) {
   if (process.env.KAKAO_REDIRECT_URI) {
     return process.env.KAKAO_REDIRECT_URI;
   }
-  return `${req.protocol}://${req.get('host')}/api/auth/kakao/callback`;
+  const forwardedProto = req.get('x-forwarded-proto');
+  const proto = String(forwardedProto || req.protocol || 'https').split(',')[0].trim();
+  const forwardedHost = req.get('x-forwarded-host');
+  const host = String(forwardedHost || req.get('host') || '').split(',')[0].trim();
+  if (!host) {
+    return '/api/auth/kakao/callback';
+  }
+  return `${proto}://${host}/api/auth/kakao/callback`;
 }
 
 function generateRandomToken() {
@@ -1100,9 +1117,20 @@ async function loadUserById(userId) {
 }
 
 async function upsertUser(profile) {
+  const includeLegacyNaverId = USERS_REQUIRE_NAVER_ID;
+  const insertColumns = includeLegacyNaverId
+    ? 'kakao_id, naver_id, nickname, email, profile_image, updated_at, last_login_at'
+    : 'kakao_id, nickname, email, profile_image, updated_at, last_login_at';
+  const insertValues = includeLegacyNaverId
+    ? [profile.kakaoId, profile.kakaoId, profile.nickname, profile.email, profile.profileImage]
+    : [profile.kakaoId, profile.nickname, profile.email, profile.profileImage];
+  const placeholders = includeLegacyNaverId
+    ? '?, ?, ?, ?, ?, datetime(\'now\'), datetime(\'now\')'
+    : '?, ?, ?, ?, datetime(\'now\'), datetime(\'now\')';
+
   await run(
-    `INSERT INTO users (kakao_id, nickname, email, profile_image, updated_at, last_login_at)
-           VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+    `INSERT INTO users (${insertColumns})
+           VALUES (${placeholders})
            ON CONFLICT(kakao_id)
            DO UPDATE SET
              nickname = excluded.nickname,
@@ -1110,7 +1138,7 @@ async function upsertUser(profile) {
              profile_image = excluded.profile_image,
              updated_at = datetime('now'),
              last_login_at = datetime('now')`,
-    [profile.kakaoId, profile.nickname, profile.email, profile.profileImage],
+    insertValues,
   );
 
   return get('SELECT id, kakao_id, nickname, email, profile_image FROM users WHERE kakao_id = ?', [
@@ -1149,13 +1177,16 @@ async function getStateRow(userId) {
     (bucket) => normalized.bucketLabels?.[bucket] !== defaultBucketLabels[bucket],
   );
   const hasCustomBucketOrder = normalized.bucketOrder.some((bucket, index) => bucket !== defaultBucketOrder[index]);
-  const hasCustomBucketSizes = Object.values(normalized.bucketSizes || {}).some(
-    (size) => Number(size?.width || 0) > 0 || Number(size?.height || 0) > 0,
-  );
   const hasCustomBucketVisibility = Object.keys(defaultBucketVisibility).some(
     (bucket) => normalized.bucketVisibility?.[bucket] !== defaultBucketVisibility[bucket],
   );
   const hasProjectLanes = Array.isArray(normalized.projectLanes) && normalized.projectLanes.length > 0;
+  const normalizedUserProfile = normalizeUserProfile(normalized.userProfile || {});
+  const hasCustomUserProfile =
+    (normalizedUserProfile.nickname && normalizedUserProfile.nickname !== DEFAULT_USER_PROFILE.nickname) ||
+    (normalizedUserProfile.honorific &&
+      normalizedUserProfile.honorific !== DEFAULT_USER_PROFILE.honorific &&
+      normalizedUserProfile.honorific !== '');
   const hasData =
     normalized.todos.length > 0 ||
     normalized.doneLog.length > 0 ||
@@ -1163,9 +1194,9 @@ async function getStateRow(userId) {
     normalized.categories.length > 1 ||
     hasCustomBucketLabels ||
     hasCustomBucketOrder ||
-    hasCustomBucketSizes ||
     hasCustomBucketVisibility ||
-    hasProjectLanes;
+    hasProjectLanes ||
+    hasCustomUserProfile;
 
   return {
     state: normalized,
@@ -1320,279 +1351,98 @@ function validateCsrf(req, res, next) {
   next();
 }
 
+let authRouterInstance = null;
+let stateRouterInstance = null;
+let holidaysRouterInstance = null;
+
 function createAuthRouter() {
-  const router = express.Router();
+  if (!authRouterInstance) {
+    const { createAuthRouter } = require('./server/modules/auth/router');
+    const { createAuthService } = require('./server/modules/auth/service');
+    const { createAuthRepository } = require('./server/modules/auth/repository');
 
-  async function startKakaoLogin(req, res) {
-    if (!process.env.KAKAO_CLIENT_ID || !process.env.KAKAO_CLIENT_SECRET) {
-      logSecurityEvent('oauth_not_configured', {
-        ip: req.ip,
-        path: req.path,
-        method: req.method,
-      });
-      res.status(500).json({ error: 'oauth_not_configured' });
-      return;
-    }
+    const authService = createAuthService({
+      parseKakaoProfile,
+      generateRandomToken,
+      getRedirectUri,
+      buildSignedSessionCookie,
+      parseSignedSessionCookie,
+    });
 
-    const state = generateRandomToken();
-    await createOauthState(state, req.ip);
+    const authRepository = createAuthRepository({
+      loadUserById,
+      upsertUser,
+      getSessionRecord,
+      saveSessionRecord,
+      deleteSessionRecord,
+      getOauthState,
+      createOauthState,
+      deleteOauthState,
+    });
 
-    const authorizeUrl = new URL('https://kauth.kakao.com/oauth/authorize');
-    authorizeUrl.searchParams.set('response_type', 'code');
-    authorizeUrl.searchParams.set('client_id', process.env.KAKAO_CLIENT_ID);
-    authorizeUrl.searchParams.set('redirect_uri', getRedirectUri(req));
-    authorizeUrl.searchParams.set('state', state);
-
-    const isProd = process.env.NODE_ENV === 'production';
-    res.cookie(OAUTH_STATE_COOKIE, state, oauthStateCookieSettings(isProd));
-    res.redirect(authorizeUrl.toString());
+    authRouterInstance = createAuthRouter({
+      logSecurityEvent,
+      authSessionMiddleware,
+      repository: authRepository,
+      service: authService,
+      secureCookieSettings,
+      csrfCookieSettings,
+      oauthStateCookieSettings,
+      sessionCookieName: SESSION_COOKIE,
+      csrfCookieName: CSRF_COOKIE,
+      oauthStateCookieName: OAUTH_STATE_COOKIE,
+      isStateValid,
+      sessionTtlMs: SESSION_TTL_MS,
+    });
   }
 
-  router.get('/me', authSessionMiddleware, async (req, res) => {
-    if (!res.locals.userSession) {
-      res.json({ authenticated: false });
-      return;
-    }
-
-    const user = await loadUserById(res.locals.userSession.userId);
-    if (!user) {
-      await deleteSessionRecord(res.locals.userSession.sessionId);
-      res.clearCookie(SESSION_COOKIE);
-      res.clearCookie(CSRF_COOKIE);
-      res.json({ authenticated: false });
-      return;
-    }
-
-    res.json({
-      authenticated: true,
-      user: {
-        id: user.id,
-        kakaoId: user.kakao_id,
-        nickname: user.nickname,
-        email: user.email,
-        profileImage: user.profile_image,
-      },
-      lastLoginAt: user.last_login_at || null,
-    });
-  });
-
-  router.get('/kakao', authSessionMiddleware, startKakaoLogin);
-  router.get('/kakao/login', authSessionMiddleware, startKakaoLogin);
-
-  router.get('/kakao/callback', async (req, res) => {
-    const { code, state, error: oauthError } = req.query;
-
-    if (oauthError) {
-      logSecurityEvent('oauth_callback_error_param', {
-        ip: req.ip,
-        path: req.path,
-        method: req.method,
-        error: String(oauthError),
-      });
-      res.redirect('/?auth=denied');
-      return;
-    }
-
-    if (!code || !state) {
-      logSecurityEvent('oauth_callback_missing_params', {
-        ip: req.ip,
-        path: req.path,
-        method: req.method,
-      });
-      res.status(400).send('invalid_callback');
-      return;
-    }
-
-    const cookieState = req.cookies?.[OAUTH_STATE_COOKIE];
-    const savedState = await getOauthState(String(state));
-
-    if (!cookieState || String(cookieState) !== String(state) || !isStateValid(savedState)) {
-      logSecurityEvent('oauth_state_invalid', {
-        ip: req.ip,
-        path: req.path,
-        method: req.method,
-        error: `cookieState=${String(cookieState || '')}, isValid=${isStateValid(savedState)}`,
-      });
-      res.clearCookie(OAUTH_STATE_COOKIE);
-      res.status(403).send('invalid_state');
-      return;
-    }
-
-    await deleteOauthState(String(state));
-    res.clearCookie(OAUTH_STATE_COOKIE);
-
-    try {
-      const tokenParams = new URLSearchParams({
-        grant_type: 'authorization_code',
-        client_id: process.env.KAKAO_CLIENT_ID,
-        client_secret: process.env.KAKAO_CLIENT_SECRET,
-        code: String(code),
-  
-        redirect_uri: getRedirectUri(req),
-      });
-
-      const tokenResponse = await fetch('https://kauth.kakao.com/oauth/token', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-        },
-        body: tokenParams.toString(),
-      });
-      const tokenData = await tokenResponse.json();
-      if (!tokenResponse.ok || tokenData.error || !tokenData.access_token) {
-        throw new Error(tokenData.error_description || tokenData.error || 'token_exchange_failed');
-      }
-
-      const profileResponse = await fetch('https://kapi.kakao.com/v2/user/me', {
-        headers: {
-          Authorization: `Bearer ${tokenData.access_token}`,
-        },
-      });
-      const profileBody = await profileResponse.json();
-      const profile = parseKakaoProfile(profileBody);
-      if (!profile) {
-        logSecurityEvent('oauth_invalid_profile', { ip: req.ip, path: req.path, method: req.method });
-        throw new Error('invalid_profile');
-      }
-
-      const user = await upsertUser(profile);
-      const sessionId = generateRandomToken();
-      const csrfToken = generateRandomToken();
-      const now = Date.now();
-
-      await saveSessionRecord(sessionId, {
-        id: sessionId,
-        userId: user.id,
-        kakaoAccessToken: tokenData.access_token,
-        kakaoRefreshToken: tokenData.refresh_token || null,
-        kakaoTokenExpiresAt:
-          Number(tokenData.expires_in || 0) > 0 ? now + Number(tokenData.expires_in) * 1000 : null,
-        csrfToken,
-        createdAt: now,
-        expiresAt: now + SESSION_TTL_MS,
-      });
-
-      const isProd = process.env.NODE_ENV === 'production';
-      res.cookie(SESSION_COOKIE, buildSignedSessionCookie(sessionId), secureCookieSettings(isProd));
-      res.cookie(CSRF_COOKIE, csrfToken, csrfCookieSettings(isProd));
-      res.redirect(process.env.AUTH_SUCCESS_REDIRECT || '/?auth=success');
-    } catch (error) {
-      logSecurityEvent('oauth_callback_failed', {
-        ip: req.ip,
-        path: req.path,
-        method: req.method,
-        error: error && error.message ? error.message : String(error),
-      });
-      console.error('oauth_callback_error', error && error.message ? error.message : error);
-      res.redirect('/?auth=error');
-    }
-  });
-
-  router.post('/logout', authSessionMiddleware, async (req, res) => {
-    const sessionId = res.locals.userSession?.sessionId || parseSignedSessionCookie(req.cookies?.[SESSION_COOKIE]);
-    const session = sessionId ? await getSessionRecord(sessionId) : null;
-
-    if (session && session.kakaoAccessToken) {
-      fetch('https://kapi.kakao.com/v1/user/unlink', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.kakaoAccessToken}`,
-        },
-      }).catch(() => {});
-    }
-
-    if (sessionId) {
-      await deleteSessionRecord(sessionId);
-    }
-
-    res.clearCookie(SESSION_COOKIE);
-    res.clearCookie(CSRF_COOKIE);
-    res.clearCookie(OAUTH_STATE_COOKIE);
-    res.json({ success: true });
-  });
-
-  return router;
+  return authRouterInstance;
 }
 
 function createStateRouter() {
-  const router = express.Router();
+  if (!stateRouterInstance) {
+    const { createStateRouter } = require('./server/modules/state/router');
+    const { createStateService } = require('./server/modules/state/service');
+    const { createStateRepository } = require('./server/modules/state/repository');
 
-  router.get('/', authSessionMiddleware, requireAuth, async (req, res) => {
-    const stateRow = await getStateRow(req.auth.userId);
-    res.json({
-      state: stateRow.state,
-      version: stateRow.version,
-      exists: stateRow.exists,
-      hasData: stateRow.hasData,
-      updatedAt: stateRow.updatedAt,
+    const stateService = createStateService({
+      normalizeState,
+      payloadHash,
     });
-  });
+    const stateRepository = createStateRepository({
+      getStateRow,
+      run,
+      getIdempotencyEntry,
+      saveIdempotencyRecord,
+    });
 
-  router.put('/', authSessionMiddleware, requireAuth, validateCsrf, async (req, res) => {
-    const payload = normalizeState(req.body || {});
-    const incomingVersion = Number(req.body?.version || 0);
-    const current = await getStateRow(req.auth.userId);
+    stateRouterInstance = createStateRouter({
+      authSessionMiddleware,
+      requireAuth,
+      validateCsrf,
+      service: stateService,
+      repository: stateRepository,
+    });
+  }
 
-    const idempotencyKeyRaw = req.get('Idempotency-Key');
-    const idempotencyKey = idempotencyKeyRaw ? idempotencyKeyRaw.trim() : '';
-    const idemStoreKey = idempotencyKey ? `${req.auth.userId}:${idempotencyKey}` : '';
-    const requestHash = idempotencyKey
-      ? payloadHash(`${incomingVersion}:${JSON.stringify(payload)}`)
-      : '';
-
-    if (idempotencyKey) {
-      const previous = await getIdempotencyEntry(idemStoreKey);
-      if (previous && previous.expiresAt > Date.now()) {
-        if (previous.requestHash !== requestHash) {
-          res.status(409).json({ error: 'idempotency_key_reuse' });
-          return;
-        }
-        res.json(previous.response);
-        return;
-      }
-    }
-
-    if (current.version > 0 && incomingVersion > 0 && incomingVersion !== current.version) {
-      res.status(409).json({
-        error: 'version_conflict',
-        version: current.version,
-        state: current.state,
-        updatedAt: current.updatedAt,
-      });
-      return;
-    }
-
-    const nextVersion = current.version > 0 ? current.version + 1 : 1;
-
-    await run(
-      `INSERT INTO user_states (user_id, state_json, version, updated_at)
-       VALUES (?, ?, ?, datetime('now'))
-       ON CONFLICT(user_id)
-       DO UPDATE SET
-         state_json = excluded.state_json,
-         version = ?,
-         updated_at = datetime('now')`,
-      [req.auth.userId, JSON.stringify(payload), nextVersion, nextVersion],
-    );
-
-    const responsePayload = {
-      success: true,
-      version: nextVersion,
-      state: payload,
-      updatedAt: new Date().toISOString(),
-    };
-
-    if (idempotencyKey) {
-      await saveIdempotencyRecord(idemStoreKey, requestHash, responsePayload);
-    }
-
-    res.json(responsePayload);
-  });
-
-  return router;
+  return stateRouterInstance;
 }
 
-app.enable('trust proxy');
+function createHolidaysRouter() {
+  if (!holidaysRouterInstance) {
+    const { createHolidaysRouter } = require('./server/modules/holidays/router');
+    const { createHolidaysService } = require('./server/modules/holidays/service');
+
+    const holidaysService = createHolidaysService({ getHolidaysByYear });
+    holidaysRouterInstance = createHolidaysRouter({
+      logSecurityEvent,
+      service: holidaysService,
+    });
+  }
+
+  return holidaysRouterInstance;
+}
+
 app.use(helmet());
 app.use(
   rateLimit({
@@ -1636,38 +1486,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.get('/api/holidays', async (req, res) => {
-  const requestedYear = Number(req.query.year);
-  const year = Number.isInteger(requestedYear) ? requestedYear : new Date().getFullYear();
-  if (!Number.isInteger(year) || year < 1970 || year > 2600) {
-    res.status(400).json({ error: 'invalid_year' });
-    return;
-  }
-
-  try {
-    const data = await getHolidaysByYear(year);
-    if (!data || typeof data !== 'object') {
-      res.status(500).json({ error: 'failed_to_load_holidays' });
-      return;
-    }
-
-    res.json({
-      ...data,
-      year,
-      source: data.source || '',
-      holidays: data.holidays || {},
-    });
-  } catch (error) {
-    logSecurityEvent('holidays_fetch_failed', {
-      ip: req.ip,
-      path: req.path,
-      method: req.method,
-      error: error && error.message ? error.message : String(error),
-      year,
-    });
-    res.status(500).json({ error: 'failed_to_load_holidays' });
-  }
-});
+app.use('/api/holidays', createHolidaysRouter());
 
 app.use(
   '/api/auth',
@@ -1700,53 +1519,96 @@ app.use((error, req, res, _next) => {
   res.status(500).send('internal_server_error');
 });
 
-ensureDatabase()
-  .then(() => {
-    const isProd = process.env.NODE_ENV === 'production';
+function startServer() {
+  return ensureDatabase()
+    .then(() => {
+      const isProd = process.env.NODE_ENV === 'production';
 
-    if (isProd && !process.env.SESSION_SECRET) {
-      console.error('[security] SESSION_SECRET is required in production.');
-      process.exit(1);
-      return;
-    }
-
-    if (!process.env.KAKAO_CLIENT_ID || !process.env.KAKAO_CLIENT_SECRET) {
-      const level = isProd ? 'error' : 'warn';
-      console[level](
-        '[security] KAKAO_CLIENT_ID or KAKAO_CLIENT_SECRET is not configured. OAuth endpoints will fail.',
-      );
-    }
-    if (SESSION_ENCRYPTION_KEY_CONFIGURED && !SESSION_TOKEN_ENCRYPTION_KEY) {
-      console.error('[security] SESSION_ENCRYPTION_KEY is set but invalid. Must be 32-byte base64/hex/utf8 string.');
-      if (isProd) {
-        process.exit(1);
-        return;
+      if (isProd && !process.env.SESSION_SECRET) {
+        console.error('[security] SESSION_SECRET is required in production.');
+        throw new Error('SESSION_SECRET is required in production.');
       }
-    }
-    if (SESSION_TOKEN_ENCRYPTION_KEY) {
-      console.log('[security] Session token encryption enabled for OAuth tokens.');
-    } else {
-      console.warn('[security] Session token encryption disabled. Configure SESSION_ENCRYPTION_KEY for production.');
-    }
 
-    setInterval(() => {
-      cleanupExpiredStates().catch(() => {});
-    }, 60 * 1000);
-    setInterval(() => {
-      cleanupExpiredSessions().catch(() => {});
-    }, 60 * 1000);
-    setInterval(() => {
-      cleanupIdempotencyStore().catch(() => {});
-    }, 60 * 1000);
+      if (!process.env.KAKAO_CLIENT_ID || !process.env.KAKAO_CLIENT_SECRET) {
+        const level = isProd ? 'error' : 'warn';
+        console[level](
+          '[security] KAKAO_CLIENT_ID or KAKAO_CLIENT_SECRET is not configured. OAuth endpoints will fail.',
+        );
+      }
+      if (SESSION_ENCRYPTION_KEY_CONFIGURED && !SESSION_TOKEN_ENCRYPTION_KEY) {
+        console.error(
+          '[security] SESSION_ENCRYPTION_KEY is set but invalid. Must be 32-byte base64/hex/utf8 string.',
+        );
+        if (isProd) {
+          throw new Error('invalid_SESSION_ENCRYPTION_KEY');
+        }
+      }
+      if (SESSION_TOKEN_ENCRYPTION_KEY) {
+        console.log('[security] Session token encryption enabled for OAuth tokens.');
+      } else {
+        console.warn('[security] Session token encryption disabled. Configure SESSION_ENCRYPTION_KEY for production.');
+      }
 
-    app.listen(PORT, () => {
-      console.log(`day-check server listening on http://localhost:${PORT}`);
+      setInterval(() => {
+        cleanupExpiredStates().catch(() => {});
+      }, 60 * 1000);
+      setInterval(() => {
+        cleanupExpiredSessions().catch(() => {});
+      }, 60 * 1000);
+      setInterval(() => {
+        cleanupIdempotencyStore().catch(() => {});
+      }, 60 * 1000);
+
+      return new Promise((resolve) => {
+        const server = app.listen(PORT, () => {
+          console.log(`day-check server listening on http://localhost:${PORT}`);
+          resolve(server);
+        });
+      });
     });
-  })
-  .catch((error) => {
+}
+
+if (require.main === module) {
+  startServer().catch((error) => {
     console.error('Failed to initialize database', error);
     process.exit(1);
   });
+}
+
+module.exports = {
+  app,
+  startServer,
+  createHolidaysRouter,
+  createAuthRouter,
+  createStateRouter,
+  authSessionMiddleware,
+  requireAuth,
+  validateCsrf,
+  getHolidaysByYear,
+  getSessionRecord,
+  saveSessionRecord,
+  deleteSessionRecord,
+  getOauthState,
+  createOauthState,
+  deleteOauthState,
+  getIdempotencyEntry,
+  saveIdempotencyRecord,
+  payloadHash,
+  parseSignedSessionCookie,
+  buildSignedSessionCookie,
+  safeTrim,
+  normalizeState,
+  getStateRow,
+  run,
+  get,
+  all,
+  getRedirectUri,
+  generateRandomToken,
+  parseKakaoProfile,
+  loadUserById,
+  upsertUser,
+  ensureDatabase,
+};
 
 
 

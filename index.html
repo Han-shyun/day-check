@@ -6,12 +6,12 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#03c75a" />
+    <meta name="theme-color" content="#f5f5f7" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="day-check" />
-    <title>day-check</title>
+    <title>Day Check</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
     <link rel="stylesheet" href="/src/style.css?v=day-check-style" />
@@ -21,9 +21,9 @@
       <header class="topbar card">
         <div>
           <p class="eyebrow">DAY-CHECK</p>
-          <h1>데일리 체크</h1>
-          <p class="hero-copy">오늘 할 일은 한 번 정리하고, 한 번에 끝내는 UI로 완성하세요.</p>
-          <p id="todayDate" class="muted"></p>
+          <h1>DAY CHECK</h1>
+          <p class="hero-copy">오늘 할 일과 장기 일정까지 한 번에 정돈해보세요.</p>
+            <p id="todayDate" class="muted today-date-chip"></p>
         </div>
         <div class="auth-area">
           <p id="authStatus" class="muted">로컬 모드</p>
@@ -92,33 +92,19 @@
         <ul id="todoList" class="todo-list"></ul>
       </section>
 
-      <div class="board-controls" aria-label="버킷 관리">
-        <button
-          id="addProjectColumnBtn"
-          class="project-add-btn hidden"
-          type="button"
-          aria-label="버킷 추가"
-        >
-          버킷 추가
-        </button>
-        <button
-          id="removeProjectColumnBtn"
-          class="column-remove-btn hidden"
-          type="button"
-          aria-label="버킷 제거"
-        >
-          버킷 제거
-        </button>
-      </div>
+      <section class="card board-wrap" aria-label="버킷 보드">
+        <div class="board-toolbar">
+          <p class="muted board-toolbar-title">버킷 관리</p>
+          <div class="board-toolbar-actions" role="presentation"></div>
+        </div>
 
-      <section class="board">
+        <section class="board">
         <article class="card column" data-bucket="bucket1">
           <div class="column-head">
             <h2 id="bucket-title-bucket1" class="bucket-title" contenteditable="true" role="textbox" data-bucket="bucket1">
               버킷 1
             </h2>
             <div class="column-head-actions">
-              <button class="column-drag-handle" type="button" aria-label="버킷 1 이동">↕</button>
               <span class="count" id="count-bucket1">0</span>
             </div>
           </div>
@@ -137,7 +123,6 @@
               버킷 2
             </h2>
             <div class="column-head-actions">
-              <button class="column-drag-handle" type="button" aria-label="버킷 2 이동">↕</button>
               <span class="count" id="count-bucket2">0</span>
             </div>
           </div>
@@ -156,7 +141,6 @@
               버킷 3
             </h2>
             <div class="column-head-actions">
-              <button class="column-drag-handle" type="button" aria-label="버킷 3 이동">↕</button>
               <span class="count" id="count-bucket3">0</span>
             </div>
           </div>
@@ -169,12 +153,12 @@
               버킷 4
             </h2>
             <div class="column-head-actions">
-              <button class="column-drag-handle" type="button" aria-label="버킷 4 이동">↕</button>
               <span class="count" id="count-bucket4">0</span>
             </div>
           </div>
           <ul id="list-bucket4" class="todo-list"></ul>
         </article>
+        </section>
       </section>
 
       <section class="card calendar" aria-label="캘린더">
@@ -240,23 +224,31 @@
             <article>
               <h4>메모</h4>
               <div class="selected-note-composer">
-                <input
+                <textarea
                   id="selectedDateNoteInput"
-                  type="text"
-                  maxlength="140"
-                  placeholder="선택한 날짜 메모 입력"
+                  rows="2"
+                  maxlength="1200"
+                  placeholder="선택한 날짜에 메모 입력"
                   aria-label="선택한 날짜 메모 입력"
-                />
-                <input
-                  id="selectedDateNoteStartDate"
-                  type="date"
-                  aria-label="선택한 날짜 메모 시작일"
-                />
-                <input
-                  id="selectedDateNoteEndDate"
-                  type="date"
-                  aria-label="선택한 날짜 메모 종료일"
-                />
+                ></textarea>
+                <div class="selected-note-range">
+                  <div class="selected-note-range-field">
+                    <label for="selectedDateNoteStartDate">시작일</label>
+                    <input
+                      id="selectedDateNoteStartDate"
+                      type="date"
+                      aria-label="선택한 날짜 메모 시작일"
+                    />
+                  </div>
+                  <div class="selected-note-range-field">
+                    <label for="selectedDateNoteEndDate">종료일</label>
+                    <input
+                      id="selectedDateNoteEndDate"
+                      type="date"
+                      aria-label="선택한 날짜 메모 종료일"
+                    />
+                  </div>
+                </div>
                 <button id="addSelectedDateNoteBtn" type="button" class="ghost-btn">메모 추가</button>
               </div>
               <ul id="selectedCalendarNoteList" class="report-list"></ul>
@@ -311,4 +303,3 @@
     <script type="module" src="/src/app/bootstrap.js"></script>
   </body>
 </html>
-

@@ -1,4 +1,8 @@
-﻿'use strict';
+'use strict';
 
-// Phase 1 bridge: keep current runtime behavior while introducing modular structure.
-require('../server');
+const { startServer } = require('./app');
+
+startServer().catch((error) => {
+  console.error('[modular] failed to start server', error);
+  process.exit(1);
+});

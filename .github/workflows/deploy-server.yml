@@ -1,0 +1,64 @@
+name: Deploy app to Ubuntu server
+
+on:
+  push:
+    branches:
+      - main
+      - work
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          SSH_HOST: ${{ secrets.SERVER_HOST }}
+          SSH_USER: ${{ secrets.SERVER_USER }}
+          SSH_PORT: ${{ secrets.SERVER_SSH_PORT }}
+          APP_PATH: ${{ secrets.SERVER_APP_PATH }}
+        run: |
+          if [ -z "$SSH_KEY" ] || [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$APP_PATH" ]; then
+            echo "::error title=Missing secrets::Set SERVER_SSH_PRIVATE_KEY, SERVER_HOST, SERVER_USER, SERVER_APP_PATH in repository secrets."
+            exit 1
+          fi
+
+          mkdir -p ~/.ssh
+          umask 077
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          PORT="${SSH_PORT:-22}"
+          ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync project files
+        env:
+          SSH_HOST: ${{ secrets.SERVER_HOST }}
+          SSH_USER: ${{ secrets.SERVER_USER }}
+          SSH_PORT: ${{ secrets.SERVER_SSH_PORT }}
+          APP_PATH: ${{ secrets.SERVER_APP_PATH }}
+        run: |
+          PORT="${SSH_PORT:-22}"
+          rsync -avz --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.env' \
+            --exclude='server.log' \
+            --exclude='security-events.log' \
+            --exclude='tmp_registerevents.txt' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${PORT} -o StrictHostKeyChecking=yes" \
+            ./ "${SSH_USER}@${SSH_HOST}:${APP_PATH}/"
+
+      - name: Install and restart on server
+        env:
+          SSH_HOST: ${{ secrets.SERVER_HOST }}
+          SSH_USER: ${{ secrets.SERVER_USER }}
+          SSH_PORT: ${{ secrets.SERVER_SSH_PORT }}
+          APP_PATH: ${{ secrets.SERVER_APP_PATH }}
+        run: |
+          PORT="${SSH_PORT:-22}"
+          ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=yes "${SSH_USER}@${SSH_HOST}" "bash ${APP_PATH}/scripts/deploy-server.sh"

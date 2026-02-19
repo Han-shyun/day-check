@@ -17,7 +17,6 @@ const CALENDAR_STORAGE_KEY = 'day-check.main.calendarItems.v1';
 const CATEGORY_STORAGE_KEY = 'day-check.main.categories.v1';
 const BUCKET_LABELS_STORAGE_KEY = 'day-check.main.bucketLabels.v1';
 const BUCKET_ORDER_STORAGE_KEY = 'day-check.main.bucketOrder.v1';
-const BUCKET_SIZES_STORAGE_KEY = 'day-check.main.bucketSizes.v1';
 const BUCKET_VISIBILITY_STORAGE_KEY = 'day-check.main.bucketVisibility.v1';
 const PROJECT_LANES_STORAGE_KEY = 'day-check.main.projectLanes.v1';
 const USER_PROFILE_STORAGE_KEY = 'day-check.main.userProfile.v1';
@@ -52,7 +51,6 @@ const state = {
   categories: [...defaultCategories],
   bucketLabels: { ...defaultBucketLabels },
   bucketOrder: [...buckets],
-  bucketSizes: {},
   bucketVisibility: { ...defaultBucketVisibility },
   projectLanes: [],
   userProfile: { ...defaultUserProfile },
@@ -76,8 +74,6 @@ const todoCountEl = document.getElementById('todoCount');
 const todoListEl = document.getElementById('todoList');
 const todoTemplate = document.getElementById('todoItemTemplate');
 const boardEl = document.querySelector('.board');
-const addProjectColumnBtn = document.getElementById('addProjectColumnBtn');
-const removeProjectColumnBtn = document.getElementById('removeProjectColumnBtn');
 
 const todoComposer = document.getElementById('todoComposer');
 const todoTextarea = document.getElementById('todoTextarea');
@@ -306,7 +302,6 @@ function loadStateFromLocal() {
   const categories = safeJsonParse(CATEGORY_STORAGE_KEY);
   const bucketLabels = safeJsonParse(BUCKET_LABELS_STORAGE_KEY);
   const bucketOrder = safeJsonParse(BUCKET_ORDER_STORAGE_KEY);
-  const bucketSizes = safeJsonParse(BUCKET_SIZES_STORAGE_KEY);
   const bucketVisibility = safeJsonParse(BUCKET_VISIBILITY_STORAGE_KEY);
   const projectLanes = safeJsonParse(PROJECT_LANES_STORAGE_KEY);
   const userProfile = safeJsonParse(USER_PROFILE_STORAGE_KEY);
@@ -345,7 +340,6 @@ function loadStateFromLocal() {
       : [...defaultCategories];
   state.bucketLabels = normalizeBucketLabels(bucketLabels);
   state.bucketOrder = normalizeBucketOrder(bucketOrder);
-  state.bucketSizes = normalizeBucketSizes(bucketSizes);
   state.bucketVisibility = normalizeBucketVisibility(bucketVisibility);
   state.projectLanes = normalizeProjectLanes(projectLanes);
   state.userProfile = normalizeUserProfile(userProfile);
@@ -389,13 +383,6 @@ function normalizeBucketOrder(input = []) {
   const unique = [...new Set(source)];
   const missing = buckets.filter((bucket) => !unique.includes(bucket));
   return [...unique, ...missing];
-}
-
-function normalizeBucketSizes() {
-  return buckets.reduce((acc, bucket) => {
-    acc[bucket] = { width: 0, height: 0 };
-    return acc;
-  }, {});
 }
 
 function normalizeBucketVisibility(input = {}) {
@@ -546,10 +533,10 @@ function normalizeStateFromServer(payload) {
     calendarItems: normalizeCalendarItems(payload?.calendarItems || []),
     bucketLabels: normalizeBucketLabels(payload?.bucketLabels || {}),
     bucketOrder: normalizeBucketOrder(payload?.bucketOrder || []),
-    bucketSizes: normalizeBucketSizes(payload?.bucketSizes || {}),
     bucketVisibility: normalizeBucketVisibility(payload?.bucketVisibility || {}),
     projectLanes: normalizeProjectLanes(payload?.projectLanes || []),
     categories: normalizeCategoryState(payload?.categories || []),
+    userProfile: normalizeUserProfile(payload?.userProfile || {}),
     currentMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
     selectedDate: state.selectedDate || toLocalIsoDate(new Date()),
     version: Number(payload?.version || 0),
@@ -559,18 +546,20 @@ function normalizeStateFromServer(payload) {
 function hasStoredData(payload) {
   const bucketLabels = payload?.bucketLabels || {};
   const bucketOrder = normalizeBucketOrder(payload?.bucketOrder || []);
-  const bucketSizes = normalizeBucketSizes(payload?.bucketSizes || {});
   const bucketVisibility = normalizeBucketVisibility(payload?.bucketVisibility || {});
   const normalizedBucketLabels = normalizeBucketLabels(bucketLabels);
+  const normalizedUserProfile = normalizeUserProfile(payload?.userProfile || {});
   const hasCustomBucketLabels = Object.keys(defaultBucketLabels).some(
     (bucket) => normalizedBucketLabels[bucket] && normalizedBucketLabels[bucket] !== defaultBucketLabels[bucket],
   );
   const hasCustomBucketOrder = bucketOrder.some((bucket, index) => bucket !== buckets[index]);
-  const hasCustomBucketSizes = buckets.some(
-    (bucket) => Number(bucketSizes?.[bucket]?.width || 0) > 0 || Number(bucketSizes?.[bucket]?.height || 0) > 0,
-  );
   const hasCustomBucketVisibility = buckets.some((bucket) => bucketVisibility[bucket] !== defaultBucketVisibility[bucket]);
   const hasProjectLanes = Array.isArray(payload?.projectLanes) && payload.projectLanes.length > 0;
+  const hasCustomUserProfile =
+    (normalizedUserProfile.nickname && normalizedUserProfile.nickname !== '') ||
+    (normalizedUserProfile.honorific &&
+      normalizedUserProfile.honorific !== defaultUserProfile.honorific &&
+      normalizedUserProfile.honorific !== '');
 
   return (
     (Array.isArray(payload.todos) && payload.todos.length > 0) ||
@@ -579,9 +568,9 @@ function hasStoredData(payload) {
     (Array.isArray(payload.categories) && payload.categories.length > 1) ||
     hasCustomBucketLabels ||
     hasCustomBucketOrder ||
-    hasCustomBucketSizes ||
     hasCustomBucketVisibility ||
-    hasProjectLanes
+    hasProjectLanes ||
+    hasCustomUserProfile
   );
 }
 
@@ -592,7 +581,6 @@ function saveLocalState() {
   localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(state.categories));
   localStorage.setItem(BUCKET_LABELS_STORAGE_KEY, JSON.stringify(state.bucketLabels));
   localStorage.setItem(BUCKET_ORDER_STORAGE_KEY, JSON.stringify(state.bucketOrder));
-  localStorage.setItem(BUCKET_SIZES_STORAGE_KEY, JSON.stringify(state.bucketSizes));
   localStorage.setItem(BUCKET_VISIBILITY_STORAGE_KEY, JSON.stringify(state.bucketVisibility));
   localStorage.setItem(PROJECT_LANES_STORAGE_KEY, JSON.stringify(state.projectLanes));
   localStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(state.userProfile));
@@ -799,13 +787,6 @@ function createBucketColumn(bucket) {
   const actions = document.createElement('div');
   actions.className = 'column-head-actions';
 
-  const dragHandle = document.createElement('button');
-  dragHandle.className = 'column-drag-handle';
-  dragHandle.type = 'button';
-  dragHandle.setAttribute('aria-label', `${getBucketLabel(bucket)} 칸 이동`);
-  dragHandle.textContent = '↔';
-  actions.appendChild(dragHandle);
-
   const count = document.createElement('span');
   count.className = 'count';
   count.id = `count-${bucket}`;
@@ -899,18 +880,16 @@ function applyBucketOrder() {
 
 function applyBucketVisibility() {
   const visibility = normalizeBucketVisibility(state.bucketVisibility);
+  buckets.forEach((bucket) => {
+    visibility[bucket] = true;
+  });
   if (!buckets.some((bucket) => visibility[bucket] !== false)) {
     visibility[normalizeBucketOrder(state.bucketOrder)[0] || buckets[0]] = true;
   }
   state.bucketVisibility = visibility;
-  const activeCount = buckets.filter((bucket) => visibility[bucket] !== false).length;
 
   if (boardEl) {
-    if (activeCount <= 1) {
-      boardEl.style.setProperty('--board-rows', '1');
-    } else {
-      boardEl.style.removeProperty('--board-rows');
-    }
+    boardEl.style.removeProperty('--board-rows');
   }
 
   buckets.forEach((bucket) => {
@@ -931,18 +910,6 @@ function applyBucketVisibility() {
   if (bucketSelect && bucketSelect.selectedOptions[0]?.disabled) {
     const firstVisible = buckets.find((bucket) => visibility[bucket] !== false) || 'bucket4';
     bucketSelect.value = firstVisible;
-  }
-
-  if (addProjectColumnBtn) {
-    addProjectColumnBtn.classList.remove('hidden');
-    addProjectColumnBtn.textContent = '버킷 추가';
-    addProjectColumnBtn.disabled = activeCount >= buckets.length;
-  }
-
-  if (removeProjectColumnBtn) {
-    removeProjectColumnBtn.classList.remove('hidden');
-    removeProjectColumnBtn.textContent = '버킷 제거';
-    removeProjectColumnBtn.disabled = activeCount <= 1;
   }
 }
 
@@ -1820,9 +1787,9 @@ async function syncState() {
         categories: state.categories,
         bucketLabels: state.bucketLabels,
         bucketOrder: state.bucketOrder,
-        bucketSizes: state.bucketSizes,
         bucketVisibility: state.bucketVisibility,
         projectLanes: state.projectLanes,
+        userProfile: state.userProfile,
         version: state.version,
       }),
     });
@@ -1838,9 +1805,9 @@ async function syncState() {
           state.categories = normalizeCategoryState(data.state?.categories || state.categories);
           state.bucketLabels = normalizeBucketLabels(data.state?.bucketLabels || state.bucketLabels);
           state.bucketOrder = normalizeBucketOrder(data.state?.bucketOrder || state.bucketOrder);
-          state.bucketSizes = normalizeBucketSizes(data.state?.bucketSizes || state.bucketSizes);
           state.bucketVisibility = normalizeBucketVisibility(data.state?.bucketVisibility || state.bucketVisibility);
           state.projectLanes = normalizeProjectLanes(data.state?.projectLanes || state.projectLanes);
+          state.userProfile = normalizeUserProfile(data.state?.userProfile || state.userProfile);
           state.version = Number(data.version || state.version);
           ensureCategoryIntegrity();
           render();
@@ -1955,9 +1922,8 @@ function renderTodayNoteHighlights(listEl, notes) {
     const main = document.createElement('div');
     main.className = 'todo-main';
 
-    const title = document.createElement('span');
-    title.className = 'title';
-    title.textContent = `오늘 메모 · ${note.text}`;
+    const title = createSelectedNoteTextNode(`오늘 메모 · ${note.text}`);
+    title.classList.add('todo-note-title');
 
     const meta = document.createElement('span');
     meta.className = 'meta';
@@ -2075,6 +2041,37 @@ function addEmptyMessage(listEl, message) {
   listEl.appendChild(li);
 }
 
+function createSelectedNoteTextNode(rawText) {
+  const text = String(rawText || '');
+  const container = document.createElement('div');
+  container.className = 'selected-note-text-wrap';
+
+  const textEl = document.createElement('p');
+  textEl.className = 'selected-note-text';
+  textEl.textContent = text;
+  textEl.title = text;
+  container.appendChild(textEl);
+
+  const needToggle = text.length > 120 || text.includes('\n');
+  if (!needToggle) {
+    return container;
+  }
+
+  const expandBtn = document.createElement('button');
+  expandBtn.type = 'button';
+  expandBtn.className = 'selected-note-expand';
+  expandBtn.textContent = '더 보기';
+  expandBtn.setAttribute('aria-expanded', 'false');
+  expandBtn.addEventListener('click', () => {
+    const expanded = textEl.classList.toggle('is-expanded');
+    expandBtn.setAttribute('aria-expanded', String(expanded));
+    expandBtn.textContent = expanded ? '접기' : '더 보기';
+  });
+
+  container.appendChild(expandBtn);
+  return container;
+}
+
 function renderSelectedDatePanel() {
   const targetDate = state.selectedDate;
   const target = new Date(targetDate);
@@ -2156,10 +2153,7 @@ function renderSelectedDatePanel() {
       const days = getRangeDaysInclusive(item.date, item.endDate || item.date);
       period.textContent = days > 1 ? `${rangeText} · ${days}일` : rangeText;
 
-      const text = document.createElement('p');
-      text.className = 'selected-note-text';
-      text.textContent = item.text;
-      text.title = item.text;
+      const text = createSelectedNoteTextNode(item.text);
 
       head.append(typeBadge, period);
       li.append(head, text);
@@ -2427,9 +2421,7 @@ function registerEvents() {
   }
   eventsRegistered = true;
 
-  registerBucketDragControls();
   registerBucketResizeObserver();
-  registerProjectColumnControls();
   registerBucketTitleEditors();
   registerBucketLaneControls();
 
@@ -2459,7 +2451,7 @@ function registerEvents() {
       });
 
       saveLocalState();
-      queueSync(itemType === 'note');
+      queueSync();
       render();
       todoTextarea.value = '';
       if (composerDate) {
@@ -2888,9 +2880,9 @@ async function bootstrap() {
         categories: [...state.categories],
         bucketLabels: { ...state.bucketLabels },
         bucketOrder: [...state.bucketOrder],
-        bucketSizes: { ...state.bucketSizes },
         bucketVisibility: { ...state.bucketVisibility },
         projectLanes: [...state.projectLanes],
+        userProfile: { ...state.userProfile },
       };
 
       if (serverState.exists && serverState.hasData) {
@@ -2900,10 +2892,10 @@ async function bootstrap() {
         state.calendarItems = merged.calendarItems;
         state.bucketLabels = normalizeBucketLabels(merged.bucketLabels);
         state.bucketOrder = normalizeBucketOrder(merged.bucketOrder);
-        state.bucketSizes = normalizeBucketSizes(merged.bucketSizes);
         state.bucketVisibility = normalizeBucketVisibility(merged.bucketVisibility);
         state.projectLanes = normalizeProjectLanes(merged.projectLanes);
         state.categories = normalizeCategoryState(merged.categories);
+        state.userProfile = normalizeUserProfile(merged.userProfile || state.userProfile);
         state.version = Number(serverState.version || 0);
       } else if (hasStoredData(localBackup)) {
         queueSync();

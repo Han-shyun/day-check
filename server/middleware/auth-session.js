@@ -1,7 +1,11 @@
-﻿'use strict';
+'use strict';
 
-function authSession(_req, _res, next) {
-  next();
+const { authSessionMiddleware } = require('../server');
+
+function authSession(req, res, next) {
+  return authSessionMiddleware(req, res, next);
 }
 
-module.exports = authSession;
+module.exports = {
+  authSession,
+};

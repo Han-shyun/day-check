@@ -1,7 +1,12 @@
-﻿'use strict';
+'use strict';
 
-function validateCsrf(_req, _res, next) {
-  next();
+const { validateCsrf } = require('../server');
+
+function csrfGuard(req, res, next) {
+  return validateCsrf(req, res, next);
 }
 
-module.exports = validateCsrf;
+module.exports = {
+  csrfGuard,
+  validateCsrf,
+};

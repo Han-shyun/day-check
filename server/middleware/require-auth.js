@@ -1,7 +1,12 @@
-﻿'use strict';
+'use strict';
 
-function requireAuth(_req, _res, next) {
-  next();
+const { requireAuth } = require('../server');
+
+function authRequired(req, res, next) {
+  return requireAuth(req, res, next);
 }
 
-module.exports = requireAuth;
+module.exports = {
+  authRequired,
+  requireAuth,
+};

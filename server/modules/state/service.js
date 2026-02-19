@@ -1,3 +1,14 @@
-﻿'use strict';
+'use strict';
 
-module.exports = {};
+function createStateService(dependencies = {}) {
+  const { normalizeState, payloadHash } = dependencies;
+
+  return {
+    normalizeState,
+    payloadHash,
+  };
+}
+
+module.exports = {
+  createStateService,
+};

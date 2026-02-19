@@ -1,11 +1,14 @@
-﻿# Server Modularization Scaffold
+# Server Modularization Scaffold
 
 This directory is introduced in Phase 1 of `MODULARIZATION_REFACTOR_PLAN.md`.
 
-Current runtime still uses `server.js` directly.
+Runtime bootstrap now has two valid entrypoints:
 
-`server/index.js` is a bridge entrypoint that currently forwards execution to `../server.js` with no behavior change.
+- `server.js`: legacy entrypoint via `node server.js`.
+- `server/index.js`: modular entrypoint that calls `server/app.js`, which delegates to the legacy
+  implementation and runs `startServer()`.
 
 Next steps:
-- extract auth/state/holidays router and service logic from `server.js`
-- replace bridge startup with `server/app.js + server/index.js`
+- phase1 compatibility refactor done: module layer now contains compatibility proxies for existing
+  auth/state/holidays behavior
+- follow-up: move real implementations into the modules and make `server/app.js` the owning compose layer

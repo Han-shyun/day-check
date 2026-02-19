@@ -1,10 +1,31 @@
-﻿'use strict';
+'use strict';
 
-// Placeholder for extracted app factory in later modularization phases.
+const legacyServer = require('../server');
+
 function createApp() {
-  throw new Error('createApp is not extracted yet. Use ../server.js runtime bridge for now.');
+  return legacyServer.app;
+}
+
+function startServer() {
+  return legacyServer.startServer();
+}
+
+function createAuthRouter() {
+  return legacyServer.createAuthRouter();
+}
+
+function createStateRouter() {
+  return legacyServer.createStateRouter();
+}
+
+function createHolidaysRouter() {
+  return legacyServer.createHolidaysRouter();
 }
 
 module.exports = {
   createApp,
+  startServer,
+  createAuthRouter,
+  createStateRouter,
+  createHolidaysRouter,
 };

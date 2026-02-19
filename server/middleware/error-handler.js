@@ -1,8 +1,14 @@
-﻿'use strict';
+'use strict';
 
-function errorHandler(error, _req, res, _next) {
-  const message = error && error.message ? error.message : 'internal_error';
-  res.status(500).json({ error: message });
+function errorHandler(error, req, res, _next) {
+  console.error(error);
+  if (req.headers.accept && req.headers.accept.includes('application/json')) {
+    res.status(500).json({ error: 'internal_server_error' });
+    return;
+  }
+  res.status(500).send('internal_server_error');
 }
 
-module.exports = errorHandler;
+module.exports = {
+  errorHandler,
+};

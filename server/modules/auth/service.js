@@ -1,3 +1,23 @@
-﻿'use strict';
+'use strict';
 
-module.exports = {};
+function createAuthService(dependencies = {}) {
+  const {
+    parseKakaoProfile,
+    generateRandomToken,
+    getRedirectUri,
+    buildSignedSessionCookie,
+    parseSignedSessionCookie,
+  } = dependencies;
+
+  return {
+    parseKakaoProfile,
+    generateRandomToken,
+    getRedirectUri,
+    buildSignedSessionCookie,
+    parseSignedSessionCookie,
+  };
+}
+
+module.exports = {
+  createAuthService,
+};
