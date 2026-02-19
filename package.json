@@ -5,8 +5,10 @@
     "type":  "commonjs",
     "scripts":  {
                     "start":       "node server.js",
+                    "start:modular": "node server/index.js",
                     "dev":         "vite",
                     "dev:server":  "node --watch server.js",
+                    "dev:server:modular": "node --watch server/index.js",
                     "server:start": "npm run start",
                     "server:dev": "npm run dev:server",
                     "server:restart": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-server.ps1",

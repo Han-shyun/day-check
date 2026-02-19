@@ -31,6 +31,22 @@
             <span class="kakao-logo" aria-hidden="true">K</span>
             <span>카카오 로그인</span>
           </button>
+          <p id="userAliasPreview" class="muted user-alias-preview">호칭 미설정</p>
+          <button
+            id="toggleProfileEditorBtn"
+            type="button"
+            class="ghost-btn"
+            aria-expanded="false"
+            aria-controls="profileEditor"
+          >
+            호칭 설정
+          </button>
+          <div id="profileEditor" class="inline-category-create hidden profile-editor">
+            <input id="profileNicknameInput" type="text" maxlength="20" placeholder="별명 (예: 지훈)" />
+            <input id="profileHonorificInput" type="text" maxlength="12" placeholder="호칭 (예: 님, 매니저님)" />
+            <button id="saveProfileBtn" type="button">저장</button>
+            <button id="cancelProfileBtn" type="button">취소</button>
+          </div>
         </div>
       </header>
 
@@ -76,6 +92,25 @@
         <ul id="todoList" class="todo-list"></ul>
       </section>
 
+      <div class="board-controls" aria-label="버킷 관리">
+        <button
+          id="addProjectColumnBtn"
+          class="project-add-btn hidden"
+          type="button"
+          aria-label="버킷 추가"
+        >
+          버킷 추가
+        </button>
+        <button
+          id="removeProjectColumnBtn"
+          class="column-remove-btn hidden"
+          type="button"
+          aria-label="버킷 제거"
+        >
+          버킷 제거
+        </button>
+      </div>
+
       <section class="board">
         <article class="card column" data-bucket="bucket1">
           <div class="column-head">
@@ -103,14 +138,6 @@
             </h2>
             <div class="column-head-actions">
               <button class="column-drag-handle" type="button" aria-label="버킷 2 이동">↕</button>
-              <button
-                id="removeProjectColumnBtn"
-                class="column-remove-btn"
-                type="button"
-                aria-label="버킷 2 버킷 삭제"
-              >
-                삭제
-              </button>
               <span class="count" id="count-bucket2">0</span>
             </div>
           </div>
@@ -149,17 +176,6 @@
           <ul id="list-bucket4" class="todo-list"></ul>
         </article>
       </section>
-
-      <div class="board-controls">
-        <button
-          id="addProjectColumnBtn"
-          class="project-add-btn hidden"
-          type="button"
-          aria-label="버킷 추가"
-        >
-          +
-        </button>
-      </div>
 
       <section class="card calendar" aria-label="캘린더">
         <div class="calendar-head">
@@ -223,6 +239,26 @@
             </article>
             <article>
               <h4>메모</h4>
+              <div class="selected-note-composer">
+                <input
+                  id="selectedDateNoteInput"
+                  type="text"
+                  maxlength="140"
+                  placeholder="선택한 날짜 메모 입력"
+                  aria-label="선택한 날짜 메모 입력"
+                />
+                <input
+                  id="selectedDateNoteStartDate"
+                  type="date"
+                  aria-label="선택한 날짜 메모 시작일"
+                />
+                <input
+                  id="selectedDateNoteEndDate"
+                  type="date"
+                  aria-label="선택한 날짜 메모 종료일"
+                />
+                <button id="addSelectedDateNoteBtn" type="button" class="ghost-btn">메모 추가</button>
+              </div>
               <ul id="selectedCalendarNoteList" class="report-list"></ul>
             </article>
           </div>
@@ -272,7 +308,7 @@
       </li>
     </template>
 
-    <script type="module" src="/src/main.js"></script>
+    <script type="module" src="/src/app/bootstrap.js"></script>
   </body>
 </html>
 
