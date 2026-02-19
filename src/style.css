@@ -869,8 +869,10 @@ button.is-active,
 .calendar-item.is-range {
   position: relative;
   z-index: 1;
-  background: #dbe9ff;
-  border-color: #9ec1ff;
+  min-height: 22px;
+  background: linear-gradient(180deg, #d3e4ff 0%, #c7dcff 100%);
+  border-color: #8fb8ff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
   border-radius: 0;
   margin-left: calc(var(--calendar-grid-gap) * -1);
   margin-right: calc(var(--calendar-grid-gap) * -1);
@@ -904,6 +906,22 @@ button.is-active,
   margin-right: 0;
   border-top-right-radius: 999px;
   border-bottom-right-radius: 999px;
+}
+
+.calendar-item.is-range .calendar-item-text {
+  font-weight: 650;
+}
+
+.calendar-item.is-range-placeholder {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.calendar-item.is-range-placeholder .type-badge,
+.calendar-item.is-range-placeholder .calendar-item-text {
+  display: none;
 }
 
 .calendar-item.is-range-continuation .type-badge,

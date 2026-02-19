@@ -2015,7 +2015,52 @@ function countDailyStats(dateText) {
   return { scheduledCount, completedCount };
 }
 
-function getEntriesForDate(dateText) {
+function buildCalendarRangeLaneMap(year, month) {
+  const monthStart = toLocalIsoDate(new Date(year, month, 1));
+  const monthEnd = toLocalIsoDate(new Date(year, month + 1, 0));
+  const rangeLaneMap = {};
+  const laneEndDates = [];
+
+  const rangeItems = state.calendarItems
+    .filter((item) => {
+      if (item.type !== 'note') {
+        return false;
+      }
+      const startDate = item.date;
+      const endDate = item.endDate || item.date;
+      const isRange = endDate > startDate;
+      if (!isRange) {
+        return false;
+      }
+      return startDate <= monthEnd && endDate >= monthStart;
+    })
+    .sort((a, b) => {
+      if (a.date !== b.date) {
+        return new Date(a.date) - new Date(b.date);
+      }
+      if ((a.endDate || a.date) !== (b.endDate || b.date)) {
+        return new Date(a.endDate || a.date) - new Date(b.endDate || b.date);
+      }
+      return new Date(a.createdAt) - new Date(b.createdAt);
+    });
+
+  rangeItems.forEach((item) => {
+    const startDate = item.date;
+    const endDate = item.endDate || item.date;
+    let lane = laneEndDates.findIndex((laneEndDate) => laneEndDate < startDate);
+    if (lane === -1) {
+      lane = laneEndDates.length;
+      laneEndDates.push(endDate);
+    } else {
+      laneEndDates[lane] = endDate;
+    }
+    rangeLaneMap[item.id] = lane;
+  });
+
+  return rangeLaneMap;
+}
+
+function getEntriesForDate(dateText, rangeLaneMap = {}) {
   const noteEntries = state.calendarItems
     .filter((item) => isDateInCalendarRange(dateText, item.date, item.endDate || item.date))
     .map((item) => ({
@@ -2027,6 +2072,11 @@ function getEntriesForDate(dateText) {
       startDate: item.date,
       endDate: item.endDate || item.date,
       isRange: (item.endDate || item.date) > item.date,
+      rangeLane:
+        (item.endDate || item.date) > item.date &&
+        Number.isInteger(rangeLaneMap?.[item.id])
+          ? rangeLaneMap[item.id]
+          : -1,
       rangePosition:
         dateText === item.date
           ? 'start'
@@ -2047,6 +2097,9 @@ function getEntriesForDate(dateText) {
   noteEntries.sort((a, b) => {
     if (a.isRange !== b.isRange) {
       return a.isRange ? -1 : 1;
+    }
+    if (a.isRange && b.isRange && a.rangeLane !== b.rangeLane) {
+      return a.rangeLane - b.rangeLane;
     }
     if (a.startDate !== b.startDate) {
       return new Date(a.startDate) - new Date(b.startDate);
@@ -2271,6 +2324,7 @@ function renderCalendar() {
   const dayCount = new Date(year, month + 1, 0).getDate();
   const startOffset = (firstDate.getDay() + 6) % 7;
   const totalCells = Math.ceil((startOffset + dayCount) / 7) * 7;
+  const rangeLaneMap = buildCalendarRangeLaneMap(year, month);
 
   const fmt = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long' });
   calendarMonthLabel.textContent = fmt.format(state.currentMonth);
@@ -2348,7 +2402,7 @@ function renderCalendar() {
     );
     cell.appendChild(dailySummary);
 
-    const entries = getEntriesForDate(dateText);
+    const entries = getEntriesForDate(dateText, rangeLaneMap);
 
     if (entries.length === 0) {
       const empty = document.createElement('p');
@@ -2359,7 +2413,30 @@ function renderCalendar() {
       const list = document.createElement('ul');
       list.className = 'calendar-item-list';
 
-      entries.slice(0, 3).forEach((entry) => {
+      const MAX_VISIBLE_ITEMS = 3;
+      const rangeEntries = entries.filter((entry) => entry.isRange);
+      const otherEntries = entries.filter((entry) => !entry.isRange);
+      const maxLaneIndex = rangeEntries.reduce(
+        (maxLane, entry) => Math.max(maxLane, entry.rangeLane || 0),
+        -1,
+      );
+      const laneSlotCount = Math.min(MAX_VISIBLE_ITEMS, Math.max(0, maxLaneIndex + 1));
+      const laneSlots = Array.from({ length: laneSlotCount }, (_, lane) =>
+        rangeEntries.find((entry) => (entry.rangeLane || 0) === lane) || null,
+      );
+      const visibleOtherEntries = otherEntries.slice(0, Math.max(0, MAX_VISIBLE_ITEMS - laneSlotCount));
+      const visibleEntries = [...laneSlots, ...visibleOtherEntries];
+      let renderedRealCount = 0;
+
+      visibleEntries.forEach((entry) => {
+        if (!entry) {
+          const placeholder = document.createElement('li');
+          placeholder.className = 'calendar-item is-range is-range-placeholder';
+          list.appendChild(placeholder);
+          return;
+        }
+
+        renderedRealCount += 1;
         const li = document.createElement('li');
         li.className = `calendar-item ${entry.type === 'note' ? 'is-note' : 'is-todo'}`;
         if (entry.isRange) {
@@ -2386,6 +2463,9 @@ function renderCalendar() {
         const text = document.createElement('span');
         text.className = 'calendar-item-text';
         text.textContent = entry.isRange && entry.rangePosition !== 'start' ? ' ' : entry.text;
+        li.title = entry.isRange
+          ? `${entry.text} (${entry.startDate} ~ ${entry.endDate})`
+          : entry.text;
 
         li.appendChild(badge);
         li.appendChild(text);
@@ -2408,10 +2488,11 @@ function renderCalendar() {
         list.appendChild(li);
       });
 
-      if (entries.length > 3) {
+      const hiddenCount = entries.length - renderedRealCount;
+      if (hiddenCount > 0) {
         const more = document.createElement('li');
         more.className = 'calendar-more';
-        more.textContent = `+${entries.length - 3}건`;
+        more.textContent = `+${hiddenCount}건`;
         list.appendChild(more);
       }
 
@@ -2960,5 +3041,4 @@ bootstrap().catch(() => {
 });
 
 registerServiceWorker();
-
 
