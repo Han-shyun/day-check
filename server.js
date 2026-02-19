@@ -1004,18 +1004,20 @@ function parseKakaoProfile(body) {
 function getRedirectUri(req) {
   const configuredRedirect = String(process.env.KAKAO_REDIRECT_URI || '').trim();
   if (configuredRedirect) {
-    if (process.env.NODE_ENV === 'production') {
-      try {
-        const parsed = new URL(configuredRedirect);
-        const host = parsed.hostname.toLowerCase();
-        if (host !== 'localhost' && host !== '127.0.0.1') {
-          return configuredRedirect;
-        }
-      } catch {
-        // Fall through to request-derived redirect URI.
+    try {
+      const parsed = new URL(configuredRedirect);
+      const redirectHost = parsed.hostname.toLowerCase();
+      const forwardedHost = req.get('x-forwarded-host');
+      const requestHost = String(forwardedHost || req.get('host') || '').split(',')[0].trim();
+      const requestHostname = requestHost.split(':')[0].toLowerCase();
+      const isRedirectLocalhost = redirectHost === 'localhost' || redirectHost === '127.0.0.1';
+      const isRequestLocalhost =
+        !requestHostname || requestHostname === 'localhost' || requestHostname === '127.0.0.1';
+      if (!isRedirectLocalhost || isRequestLocalhost) {
+        return configuredRedirect;
       }
-    } else {
-      return configuredRedirect;
+    } catch {
+      // Fall through to request-derived redirect URI.
     }
   }
   const forwardedProto = req.get('x-forwarded-proto');
@@ -1622,5 +1624,4 @@ module.exports = {
   upsertUser,
   ensureDatabase,
 };
-
 
