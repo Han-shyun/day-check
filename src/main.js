@@ -2161,9 +2161,19 @@ function renderSelectedDatePanel() {
 
   const createdTodos = sortTodos(state.todos.filter((todo) => parseIsoDate(todo.createdAt) === targetDate));
   const completedTodos = state.doneLog.filter((log) => parseIsoDate(log.completedAt) === targetDate);
-  const notes = state.calendarItems.filter((item) =>
-    isDateInCalendarRange(targetDate, item.date, item.endDate || item.date),
-  );
+  const notes = state.calendarItems
+    .filter((item) => isDateInCalendarRange(targetDate, item.date, item.endDate || item.date))
+    .sort((a, b) => {
+      const aIsRange = (a.endDate || a.date) > a.date;
+      const bIsRange = (b.endDate || b.date) > b.date;
+      if (aIsRange !== bIsRange) {
+        return aIsRange ? -1 : 1;
+      }
+      if (a.date !== b.date) {
+        return new Date(a.date) - new Date(b.date);
+      }
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
 
   selectedDateSummary.textContent = `작성 ${createdTodos.length}개 / 완료 ${completedTodos.length}개 / 메모 ${notes.length}개`;
   selectedCreatedList.innerHTML = '';
@@ -2215,6 +2225,9 @@ function renderSelectedDatePanel() {
       const li = document.createElement('li');
       const rangeText = formatCalendarRange(item.date, item.endDate || item.date);
       li.className = 'selected-note-item';
+      if ((item.endDate || item.date) > item.date) {
+        li.classList.add('is-range-note');
+      }
 
       const head = document.createElement('div');
       head.className = 'selected-note-head';
@@ -2456,10 +2469,6 @@ function renderCalendar() {
           }
         }
 
-        const badge = document.createElement('span');
-        badge.className = 'type-badge';
-        badge.textContent = entry.isRange ? '장기' : typeLabel[entry.type] || entry.type;
-
         const text = document.createElement('span');
         text.className = 'calendar-item-text';
         text.textContent = entry.isRange && entry.rangePosition !== 'start' ? ' ' : entry.text;
@@ -2467,7 +2476,12 @@ function renderCalendar() {
           ? `${entry.text} (${entry.startDate} ~ ${entry.endDate})`
           : entry.text;
 
-        li.appendChild(badge);
+        if (!entry.isRange) {
+          const badge = document.createElement('span');
+          badge.className = 'type-badge';
+          badge.textContent = typeLabel[entry.type] || entry.type;
+          li.appendChild(badge);
+        }
         li.appendChild(text);
 
         if (entry.source === 'calendar' && (!entry.isRange || entry.rangePosition === 'start')) {
@@ -3041,4 +3055,3 @@ bootstrap().catch(() => {
 });
 
 registerServiceWorker();
-
