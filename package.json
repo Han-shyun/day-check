@@ -7,6 +7,10 @@
                     "start":       "node server.js",
                     "dev":         "vite",
                     "dev:server":  "node --watch server.js",
+                    "server:start": "npm run start",
+                    "server:dev": "npm run dev:server",
+                    "server:restart": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-server.ps1",
+                    "server:restart:prod": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-server.ps1 -Production",
                     "check:text":  "node scripts/check-text.js",
                     "build":       "npm run check:text && vite build",
                     "preview":     "vite preview --port 4173"

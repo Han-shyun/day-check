@@ -13,27 +13,19 @@ const API_BASE = '/api';
 const SYNC_DEBOUNCE_MS = 500;
 
 const defaultCategories = [{ id: 'uncategorized', name: '미분류' }];
-const defaultBucketLabels = {
-  today: '오늘',
-  project: '프로젝트',
-  routine: '루틴',
-  inbox: 'inbox',
-  bucket5: '버킷 5',
-  bucket6: '버킷 6',
-  bucket7: '버킷 7',
-  bucket8: '버킷 8',
-};
-const defaultBucketVisibility = {
-  today: true,
-  project: true,
-  routine: true,
-  inbox: true,
-  bucket5: false,
-  bucket6: false,
-  bucket7: false,
-  bucket8: false,
-};
-const buckets = ['today', 'project', 'routine', 'inbox', 'bucket5', 'bucket6', 'bucket7', 'bucket8'];
+const BUCKET_TOTAL = 8;
+const defaultBucketLabels = Array.from({ length: BUCKET_TOTAL }, (_, index) => [
+  `bucket${index + 1}`,
+  `버킷 ${index + 1}`,
+]).reduce((acc, [bucket, label]) => {
+  acc[bucket] = label;
+  return acc;
+}, {});
+const buckets = Object.keys(defaultBucketLabels);
+const defaultBucketVisibility = buckets.reduce((acc, bucket, index) => {
+  acc[bucket] = index < 4;
+  return acc;
+}, {});
 
 const state = {
   todos: [],
@@ -58,6 +50,7 @@ let syncTimer = null;
 let eventsRegistered = false;
 let columnResizeObserver = null;
 let toastHostEl = null;
+let calendarMode = 'note';
 
 const dateEl = document.getElementById('todayDate');
 const todoCountEl = document.getElementById('todoCount');
@@ -92,7 +85,8 @@ const prioritySelect = document.getElementById('prioritySelect');
 
 const calendarForm = document.getElementById('calendarForm');
 const calendarDateInput = document.getElementById('calendarDateInput');
-const calendarTypeSelect = document.getElementById('calendarTypeSelect');
+const calendarModeButtons = Array.from(document.querySelectorAll('.calendar-mode-btn'));
+const calendarSubmitBtn = document.getElementById('calendarSubmitBtn');
 const calendarTextInput = document.getElementById('calendarTextInput');
 const calendarTodoFields = document.getElementById('calendarTodoFields');
 const calendarTodoTitleInput = document.getElementById('calendarTodoTitleInput');
@@ -119,6 +113,19 @@ const typeLabel = {
   note: '메모',
 };
 
+const HOLIDAYS_BY_MONTH_DAY_FALLBACK = {
+  '01-01': '신정',
+  '03-01': '삼일절',
+  '05-05': '어린이날',
+  '06-06': '현충일',
+  '08-15': '광복절',
+  '10-03': '개천절',
+  '10-09': '한글날',
+  '12-25': '성탄절',
+};
+const HOLIDAYS_BY_YEAR = {};
+const HOLIDAYS_REQUEST = {};
+
 function hasBrokenText(value) {
   const text = String(value || '');
   if (!text) {
@@ -141,6 +148,101 @@ function parseIsoDate(isoText) {
     return '';
   }
   return isoText.slice(0, 10);
+}
+
+function getHolidayFallbackLabel(date) {
+  return HOLIDAYS_BY_MONTH_DAY_FALLBACK[formatMonthDay(date)] || '';
+}
+
+function formatMonthDay(date) {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${month}-${day}`;
+}
+
+function getHolidayLabel(date) {
+  const year = String(date.getFullYear());
+  const dateText = toLocalIsoDate(date);
+  const fallback = getHolidayFallbackLabel(date);
+
+  return HOLIDAYS_BY_YEAR[year]?.[dateText] || fallback;
+}
+
+function normalizeHolidayMap(candidate) {
+  const source = candidate && typeof candidate === 'object' && !Array.isArray(candidate) ? candidate : {};
+  const normalized = {};
+  Object.entries(source).forEach(([dateText, label]) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
+      return;
+    }
+    const text = String(label || '').trim();
+    if (text) {
+      normalized[dateText] = text;
+    }
+  });
+  return normalized;
+}
+
+function requestHolidayData(year) {
+  const yearText = String(year);
+  if (HOLIDAYS_BY_YEAR[yearText] || HOLIDAYS_REQUEST[yearText]) {
+    return HOLIDAYS_REQUEST[yearText] || Promise.resolve(HOLIDAYS_BY_YEAR[yearText]);
+  }
+
+  const promise = (async () => {
+    try {
+      const response = await fetch(`${API_BASE}/holidays?year=${encodeURIComponent(yearText)}`, {
+        headers: {
+          'cache-control': 'no-store',
+        },
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        HOLIDAYS_BY_YEAR[yearText] = {};
+        return {};
+      }
+
+      const payload = await response.json();
+      const holidayMap = normalizeHolidayMap(payload?.holidays);
+      HOLIDAYS_BY_YEAR[yearText] = holidayMap;
+      return HOLIDAYS_BY_YEAR[yearText];
+    } catch {
+      HOLIDAYS_BY_YEAR[yearText] = HOLIDAYS_BY_YEAR[yearText] || {};
+      return {};
+    } finally {
+      HOLIDAYS_REQUEST[yearText] = null;
+    }
+  })();
+
+  HOLIDAYS_REQUEST[yearText] = promise;
+  promise.catch(() => {
+    HOLIDAYS_BY_YEAR[yearText] = HOLIDAYS_BY_YEAR[yearText] || {};
+  });
+  return promise;
+}
+
+function ensureHolidayDataForYear(year) {
+  const yearText = String(year);
+  if (HOLIDAYS_BY_YEAR[yearText] || HOLIDAYS_REQUEST[yearText]) {
+    return HOLIDAYS_REQUEST[yearText] || Promise.resolve(HOLIDAYS_BY_YEAR[yearText]);
+  }
+
+  const request = requestHolidayData(yearText);
+  request.finally(() => {
+    HOLIDAYS_REQUEST[yearText] = null;
+  });
+  return request;
+}
+
+function getWeekendType(date) {
+  const weekday = date.getDay();
+  if (weekday === 6) {
+    return 'saturday';
+  }
+  if (weekday === 0) {
+    return 'sunday';
+  }
+  return '';
 }
 
 function formatDisplayDate(isoText) {
@@ -194,6 +296,29 @@ function safeJsonParse(key) {
   } catch {
     return [];
   }
+}
+
+function normalizeBucketId(raw) {
+  if (typeof raw !== 'string') {
+    return '';
+  }
+  const normalized = raw.trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized;
+}
+
+function normalizeBucketIdOrDefault(raw, fallback = '') {
+  const normalized = normalizeBucketId(raw);
+  return buckets.includes(normalized) ? normalized : fallback;
+}
+
+function getBucketFieldValue(input, bucket) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return undefined;
+  }
+  return Object.prototype.hasOwnProperty.call(input, bucket) ? input[bucket] : undefined;
 }
 
 function ensureDateInState() {
@@ -264,7 +389,7 @@ function normalizeTodos(todos) {
       details: normalizeTodoDetails(todo.details || todo.description || ''),
       categoryId: todo.categoryId || todo.bucketId || todo.bucket || 'uncategorized',
       projectLaneId: typeof todo.projectLaneId === 'string' ? todo.projectLaneId : '',
-      bucket: todo.bucket || 'inbox',
+      bucket: normalizeBucketIdOrDefault(todo.bucket, 'bucket4'),
       priority: Number(todo.priority || 2),
       dueDate: String(todo.dueDate || '').trim(),
       createdAt: todo.createdAt || new Date().toISOString(),
@@ -275,15 +400,18 @@ function normalizeTodos(todos) {
 function normalizeBucketLabels(input = {}) {
   const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   return buckets.reduce((acc, bucket) => {
-    const raw = typeof source[bucket] === 'string' ? source[bucket].trim() : '';
-    const label = raw && !hasBrokenText(raw) ? raw : '';
-    acc[bucket] = label || defaultBucketLabels[bucket] || bucket;
+    const rawValue = getBucketFieldValue(source, bucket);
+    const raw = typeof rawValue === 'string' ? rawValue.trim() : '';
+    const safeLabel = raw && !hasBrokenText(raw) ? raw : '';
+    acc[bucket] = safeLabel || defaultBucketLabels[bucket] || bucket;
     return acc;
   }, {});
 }
 
 function normalizeBucketOrder(input = []) {
-  const source = Array.isArray(input) ? input.filter((bucket) => buckets.includes(bucket)) : [];
+  const source = Array.isArray(input)
+    ? input.map((bucket) => normalizeBucketId(bucket)).filter((bucket) => buckets.includes(bucket))
+    : [];
   const unique = [...new Set(source)];
   const missing = buckets.filter((bucket) => !unique.includes(bucket));
   return [...unique, ...missing];
@@ -292,8 +420,9 @@ function normalizeBucketOrder(input = []) {
 function normalizeBucketSizes(input = {}) {
   const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   return buckets.reduce((acc, bucket) => {
-    const width = Number(source?.[bucket]?.width || 0);
-    const height = Number(source?.[bucket]?.height || 0);
+    const raw = getBucketFieldValue(source, bucket);
+    const width = Number(raw?.width || 0);
+    const height = Number(raw?.height || 0);
     acc[bucket] = {
       width: Number.isFinite(width) && width >= 220 ? Math.round(width) : 0,
       height: Number.isFinite(height) && height >= 220 ? Math.round(height) : 0,
@@ -305,15 +434,16 @@ function normalizeBucketSizes(input = {}) {
 function normalizeBucketVisibility(input = {}) {
   const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const visibility = buckets.reduce((acc, bucket) => {
+    const value = getBucketFieldValue(source, bucket);
     acc[bucket] =
-      typeof source[bucket] === 'boolean'
-        ? source[bucket]
+      typeof value === 'boolean'
+        ? value
         : defaultBucketVisibility[bucket] !== false;
     return acc;
   }, {});
 
   if (!buckets.some((bucket) => visibility[bucket] !== false)) {
-    visibility.today = true;
+    visibility[buckets[0]] = true;
   }
   return visibility;
 }
@@ -346,7 +476,7 @@ function normalizeProjectLanes(input = []) {
       return;
     }
 
-    const bucket = typeof item.bucket === 'string' && buckets.includes(item.bucket) ? item.bucket : 'project';
+    const bucket = normalizeBucketIdOrDefault(item.bucket, 'bucket2');
     const duplicateInBucket = normalized.some(
       (lane) => lane.bucket === bucket && lane.name.toLowerCase() === name.toLowerCase(),
     );
@@ -384,7 +514,7 @@ function normalizeDoneLog(doneLog) {
       details: normalizeTodoDetails(item.details || item.description || ''),
       categoryId: item.categoryId || 'uncategorized',
       projectLaneId: typeof item.projectLaneId === 'string' ? item.projectLaneId : '',
-      bucket: item.bucket || 'inbox',
+      bucket: normalizeBucketIdOrDefault(item.bucket, 'bucket4'),
       priority: Number(item.priority || 2),
       dueDate: String(item.dueDate || ''),
       createdAt: item.createdAt || new Date().toISOString(),
@@ -451,8 +581,9 @@ function hasStoredData(payload) {
   const bucketOrder = normalizeBucketOrder(payload?.bucketOrder || []);
   const bucketSizes = normalizeBucketSizes(payload?.bucketSizes || {});
   const bucketVisibility = normalizeBucketVisibility(payload?.bucketVisibility || {});
+  const normalizedBucketLabels = normalizeBucketLabels(bucketLabels);
   const hasCustomBucketLabels = Object.keys(defaultBucketLabels).some(
-    (bucket) => bucketLabels[bucket] && bucketLabels[bucket] !== defaultBucketLabels[bucket],
+    (bucket) => normalizedBucketLabels[bucket] && normalizedBucketLabels[bucket] !== defaultBucketLabels[bucket],
   );
   const hasCustomBucketOrder = bucketOrder.some((bucket, index) => bucket !== buckets[index]);
   const hasCustomBucketSizes = buckets.some(
@@ -543,10 +674,11 @@ function ensureProjectLaneIntegrity() {
   };
 
   const mapLane = (entry) => {
-    if (!entry || !entry.bucket || !buckets.includes(entry.bucket)) {
+    const bucket = normalizeBucketIdOrDefault(entry?.bucket);
+    if (!bucket) {
       return '';
     }
-    return resolveLaneId(entry);
+    return resolveLaneId({ ...entry, bucket });
   };
 
   state.todos = state.todos.map((todo) => ({
@@ -560,7 +692,7 @@ function ensureProjectLaneIntegrity() {
   }));
 }
 
-function addProjectLane(rawName, bucket = 'project') {
+function addProjectLane(rawName, bucket = 'bucket2') {
   if (!buckets.includes(bucket)) {
     return false;
   }
@@ -597,7 +729,7 @@ function getTodoGroupLabel(todo) {
   if (!todo) {
     return '';
   }
-  const bucket = getBucketLabel(todo.bucket || 'inbox');
+  const bucket = getBucketLabel(normalizeBucketIdOrDefault(todo.bucket, 'bucket4'));
   const lane = getProjectLaneName(todo.projectLaneId || '');
   return lane ? `${bucket}/${lane}` : `${bucket}/unassigned`;
 }
@@ -689,8 +821,8 @@ function createBucketColumn(bucket) {
   const dragHandle = document.createElement('button');
   dragHandle.className = 'column-drag-handle';
   dragHandle.type = 'button';
-  dragHandle.setAttribute('aria-label', `${getBucketLabel(bucket)} 칼럼 드래그 이동`);
-  dragHandle.textContent = '≡';
+  dragHandle.setAttribute('aria-label', `${getBucketLabel(bucket)} 칸 이동`);
+  dragHandle.textContent = '↔';
   actions.appendChild(dragHandle);
 
   const count = document.createElement('span');
@@ -790,6 +922,15 @@ function applyBucketVisibility() {
     visibility[normalizeBucketOrder(state.bucketOrder)[0] || buckets[0]] = true;
   }
   state.bucketVisibility = visibility;
+  const activeCount = buckets.filter((bucket) => visibility[bucket] !== false).length;
+
+  if (boardEl) {
+    if (activeCount <= 1) {
+      boardEl.style.setProperty('--board-rows', '1');
+    } else {
+      boardEl.style.removeProperty('--board-rows');
+    }
+  }
 
   buckets.forEach((bucket) => {
     const visible = visibility[bucket] !== false;
@@ -807,13 +948,13 @@ function applyBucketVisibility() {
   });
 
   if (bucketSelect && bucketSelect.selectedOptions[0]?.disabled) {
-    const firstVisible = buckets.find((bucket) => visibility[bucket] !== false) || 'inbox';
+    const firstVisible = buckets.find((bucket) => visibility[bucket] !== false) || 'bucket4';
     bucketSelect.value = firstVisible;
   }
 
   if (addProjectColumnBtn) {
     addProjectColumnBtn.classList.remove('hidden');
-    addProjectColumnBtn.textContent = '+ 버킷 추가';
+    addProjectColumnBtn.textContent = '+';
   }
 
   if (removeProjectColumnBtn) {
@@ -1067,13 +1208,23 @@ function registerProjectColumnControls() {
   }
 
   if (addProjectColumnBtn) {
+    addProjectColumnBtn.setAttribute('aria-label', '버킷 추가');
+    addProjectColumnBtn.setAttribute('aria-pressed', 'false');
     addProjectColumnBtn.addEventListener('click', () => {
       const bucket = addNextHiddenBucket();
       if (!bucket) {
         showToast('추가 가능한 버킷이 없습니다.', 'error');
         return;
       }
-      showToast(`${getBucketLabel(bucket)} 버킷을 추가했습니다.`, 'success');
+
+      addProjectColumnBtn.classList.add('is-active');
+      addProjectColumnBtn.setAttribute('aria-pressed', 'true');
+      setTimeout(() => {
+        addProjectColumnBtn.classList.remove('is-active');
+        addProjectColumnBtn.setAttribute('aria-pressed', 'false');
+      }, 120);
+
+      showToast(`${getBucketLabel(bucket)} 버킷 추가됨`, 'success');
       render();
       queueSync();
     });
@@ -1091,8 +1242,10 @@ function registerBucketLaneControls() {
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
     addBtn.className = 'column-remove-btn bucket-lane-add-btn';
-    addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 세부 프로젝트 추가`);
-    addBtn.textContent = '+ 세부';
+    addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 세부 추가`);
+    addBtn.setAttribute('aria-expanded', 'false');
+    addBtn.setAttribute('aria-pressed', 'false');
+    addBtn.textContent = '+';
     const laneCreate = document.createElement('div');
     laneCreate.className = 'inline-category-create hidden bucket-lane-create';
     const laneNameInput = document.createElement('input');
@@ -1102,23 +1255,32 @@ function registerBucketLaneControls() {
     laneNameInput.setAttribute('aria-label', `${getBucketLabel(bucket)} 세부 프로젝트 이름`);
     const laneCreateBtn = document.createElement('button');
     laneCreateBtn.type = 'button';
-    laneCreateBtn.className = 'column-remove-btn';
+    laneCreateBtn.className = 'column-remove-btn lane-create-submit-btn';
     laneCreateBtn.textContent = '추가';
     const laneCancelBtn = document.createElement('button');
     laneCancelBtn.type = 'button';
-    laneCancelBtn.className = 'column-remove-btn';
-    laneCancelBtn.textContent = '痍⑥냼';
+    laneCancelBtn.className = 'column-remove-btn lane-create-cancel-btn';
+    laneCancelBtn.textContent = '×';
+    laneCancelBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 세부 프로젝트 취소`);
     laneCreate.append(laneNameInput, laneCreateBtn, laneCancelBtn);
 
     const showLaneCreate = () => {
       laneCreate.classList.remove('hidden');
-      addBtn.classList.add('hidden');
+      addBtn.classList.add('is-active');
+      addBtn.textContent = '×';
+      addBtn.setAttribute('aria-expanded', 'true');
+      addBtn.setAttribute('aria-pressed', 'true');
+      addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 세부 닫기`);
       laneNameInput.value = '';
       laneNameInput.focus();
     };
     const hideLaneCreate = () => {
       laneCreate.classList.add('hidden');
-      addBtn.classList.remove('hidden');
+      addBtn.classList.remove('is-active');
+      addBtn.textContent = '+';
+      addBtn.setAttribute('aria-expanded', 'false');
+      addBtn.setAttribute('aria-pressed', 'false');
+      addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 세부 추가`);
       laneNameInput.value = '';
     };
     const submitLaneCreate = () => {
@@ -1127,7 +1289,7 @@ function registerBucketLaneControls() {
         laneNameInput.focus();
         return;
       }
-      showToast(`${getBucketLabel(bucket)} 세부 프로젝트를 추가했습니다.`, 'success');
+      showToast(`${getBucketLabel(bucket)} 세부 추가됨`, 'success');
       hideLaneCreate();
       render();
       queueSync();
@@ -1136,6 +1298,8 @@ function registerBucketLaneControls() {
     addBtn.addEventListener('click', () => {
       if (laneCreate.classList.contains('hidden')) {
         showLaneCreate();
+      } else {
+        hideLaneCreate();
       }
     });
     laneCreateBtn.addEventListener('click', submitLaneCreate);
@@ -1152,8 +1316,8 @@ function registerBucketLaneControls() {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'column-remove-btn bucket-remove-btn';
-    removeBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 버킷 제거`);
-    removeBtn.textContent = '제거';
+    removeBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 버킷 삭제`);
+    removeBtn.textContent = '×';
     removeBtn.addEventListener('click', () => {
       if (!removeBucket(bucket)) {
         showToast('최소 1개 버킷은 남아 있어야 합니다.', 'error');
@@ -1256,13 +1420,13 @@ function renderProjectLaneOptions(selectEl, todo) {
     return;
   }
 
-  const bucket = todo?.bucket || 'inbox';
+  const bucket = todo?.bucket || 'bucket4';
   const lanes = state.projectLanes.filter((lane) => lane.bucket === bucket);
   selectEl.innerHTML = '';
 
   const emptyOption = document.createElement('option');
   emptyOption.value = '';
-  emptyOption.textContent = '미지정 프로젝트 칼럼';
+  emptyOption.textContent = '미지정';
   if (!todo.projectLaneId) {
     emptyOption.selected = true;
   }
@@ -1480,7 +1644,7 @@ function createTodo({
   details = '',
   categoryId = 'uncategorized',
   projectLaneId = '',
-  bucket = 'inbox',
+  bucket = 'bucket4',
   priority = 2,
   dueDate = '',
 }) {
@@ -1716,7 +1880,7 @@ async function syncState() {
   }
 }
 
-function queueSync() {
+function queueSync(immediate = false) {
   saveLocalState();
 
   if (!isServerSync) {
@@ -1725,6 +1889,15 @@ function queueSync() {
 
   if (syncing) {
     pendingSync = true;
+    return;
+  }
+
+  if (immediate) {
+    if (syncTimer) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+    }
+    syncState().catch(() => {});
     return;
   }
 
@@ -1758,7 +1931,7 @@ function renderTodoComposer() {
   noneOption.textContent = '세부 프로젝트 없음';
   composerCategory.appendChild(noneOption);
   state.projectLanes
-    .filter((lane) => lane.bucket === 'inbox')
+    .filter((lane) => lane.bucket === 'bucket4')
     .forEach((lane) => {
       const option = document.createElement('option');
       option.value = lane.id;
@@ -1900,11 +2073,22 @@ function renderSelectedDatePanel() {
 }
 
 function isCalendarTodoMode() {
-  return calendarTypeSelect?.value === 'todo';
+  return calendarMode === 'todo';
+}
+
+function setCalendarMode(mode) {
+  calendarMode = mode === 'todo' ? 'todo' : 'note';
+  applyCalendarFormMode();
 }
 
 function applyCalendarFormMode() {
   const isTodo = isCalendarTodoMode();
+  calendarModeButtons.forEach((button) => {
+    const buttonMode = button.dataset.calendarMode;
+    const isActive = buttonMode === calendarMode;
+    button.classList.toggle('is-active', isActive);
+    button.setAttribute('aria-pressed', String(isActive));
+  });
   if (calendarTodoFields) {
     if (isTodo) {
       calendarTodoFields.classList.remove('hidden');
@@ -1919,11 +2103,21 @@ function applyCalendarFormMode() {
   if (calendarTodoTitleInput) {
     calendarTodoTitleInput.required = isTodo;
   }
+  if (calendarSubmitBtn) {
+    calendarSubmitBtn.textContent = isTodo ? '할 일 저장' : '노트 저장';
+  }
 }
 
 function renderCalendar() {
   const year = state.currentMonth.getFullYear();
   const month = state.currentMonth.getMonth();
+  const yearText = String(year);
+  if (!HOLIDAYS_BY_YEAR[yearText]) {
+    ensureHolidayDataForYear(year).finally(() => {
+      render();
+    });
+  }
+
   const firstDate = new Date(year, month, 1);
   const dayCount = new Date(year, month + 1, 0).getDate();
   const startOffset = (firstDate.getDay() + 6) % 7;
@@ -1949,9 +2143,36 @@ function renderCalendar() {
 
     const currentDate = new Date(year, month, dayNumber);
     const dateText = toLocalIsoDate(currentDate);
+    const todayText = toLocalIsoDate(new Date());
+    const isTodayDate = dateText === todayText;
+    const isSelectedDate = dateText === state.selectedDate;
+    const weekendType = getWeekendType(currentDate);
+    const holidayLabel = getHolidayLabel(currentDate);
+    const isHoliday = Boolean(holidayLabel);
 
-    if (dateText === state.selectedDate) {
-      cell.classList.add('is-selected');
+    cell.setAttribute('role', 'button');
+    cell.setAttribute('tabindex', '0');
+    cell.setAttribute('aria-label', `${month + 1}월 ${dayNumber}일`);
+
+    if (isTodayDate) {
+      cell.classList.add('is-today');
+      cell.setAttribute('aria-current', 'date');
+    } else {
+      cell.removeAttribute('aria-current');
+    }
+
+    if (weekendType) {
+      cell.classList.add(`is-${weekendType}`);
+    }
+    if (isHoliday) {
+      cell.classList.add('is-holiday');
+    }
+
+    if (isSelectedDate) {
+      cell.classList.add('is-selected', 'is-active');
+      cell.setAttribute('aria-selected', 'true');
+    } else {
+      cell.removeAttribute('aria-selected');
     }
 
     const dayLabel = document.createElement('p');
@@ -1959,10 +2180,23 @@ function renderCalendar() {
     dayLabel.textContent = String(dayNumber);
     cell.appendChild(dayLabel);
 
+    if (isHoliday) {
+      const holidayBadge = document.createElement('p');
+      holidayBadge.className = 'calendar-holiday';
+      holidayBadge.textContent = holidayLabel;
+      cell.appendChild(holidayBadge);
+    }
+
     const { scheduledCount, completedCount } = countDailyStats(dateText);
     const dailySummary = document.createElement('p');
     dailySummary.className = 'calendar-summary';
     dailySummary.textContent = `일정 ${scheduledCount} / 완료 ${completedCount}`;
+    const weekendLabel = weekendType === 'saturday' ? ' 토요일' : weekendType === 'sunday' ? ' 일요일' : '';
+    const holidayDescription = isHoliday ? `, 공휴일(${holidayLabel})` : '';
+    cell.setAttribute(
+      'aria-label',
+      `${month + 1}월 ${dayNumber}일${weekendLabel}, ${dailySummary.textContent}${holidayDescription}`,
+    );
     cell.appendChild(dailySummary);
 
     const entries = getEntriesForDate(dateText);
@@ -2001,7 +2235,7 @@ function renderCalendar() {
             event.stopPropagation();
             state.calendarItems = state.calendarItems.filter((item) => item.id !== entry.id);
             render();
-            queueSync();
+            queueSync(true);
           });
           li.appendChild(removeBtn);
         }
@@ -2019,7 +2253,7 @@ function renderCalendar() {
       cell.appendChild(list);
     }
 
-    cell.addEventListener('click', () => {
+    const selectDate = () => {
       state.selectedDate = dateText;
       state.currentMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       render();
@@ -2027,16 +2261,20 @@ function renderCalendar() {
         if (calendarDateInput) {
           calendarDateInput.value = dateText;
         }
-        if (calendarTypeSelect) {
-          calendarTypeSelect.value = 'note';
-        }
-        applyCalendarFormMode();
+        setCalendarMode('note');
         if (calendarTextInput && !calendarTextInput.classList.contains('hidden')) {
           calendarTextInput.focus();
         } else if (calendarTodoTitleInput) {
           calendarTodoTitleInput.focus();
         }
         calendarForm.hidden = false;
+      }
+    };
+    cell.addEventListener('click', selectDate);
+    cell.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        selectDate();
       }
     });
 
@@ -2073,7 +2311,7 @@ function registerEvents() {
           createTodo({
             title,
             categoryId: composerCategory?.value || 'uncategorized',
-            bucket: 'inbox',
+            bucket: 'bucket4',
             priority: Number(composerPriority?.value || 2),
             dueDate: composerDate?.value || '',
           }),
@@ -2081,7 +2319,7 @@ function registerEvents() {
       });
 
       saveLocalState();
-      queueSync();
+      queueSync(itemType === 'note');
       render();
       todoTextarea.value = '';
       if (composerDate) {
@@ -2097,10 +2335,13 @@ function registerEvents() {
   }
 
   if (openCategoryInlineBtn && inlineCategoryCreate) {
+    openCategoryInlineBtn.setAttribute('aria-pressed', 'false');
     openCategoryInlineBtn.addEventListener('click', () => {
       const isHidden = inlineCategoryCreate.classList.contains('hidden');
       const nextHidden = !isHidden;
       inlineCategoryCreate.classList.toggle('hidden', nextHidden);
+      openCategoryInlineBtn.classList.toggle('is-active', !nextHidden);
+      openCategoryInlineBtn.setAttribute('aria-pressed', String(!nextHidden));
       if (!nextHidden && newCategoryInput) {
         newCategoryInput.focus();
       }
@@ -2109,6 +2350,8 @@ function registerEvents() {
     cancelCategoryBtn?.addEventListener('click', () => {
       newCategoryInput.value = '';
       inlineCategoryCreate.classList.add('hidden');
+      openCategoryInlineBtn.classList.remove('is-active');
+      openCategoryInlineBtn.setAttribute('aria-pressed', 'false');
     });
 
     createCategoryBtn?.addEventListener('click', () => {
@@ -2135,6 +2378,8 @@ function registerEvents() {
         composerCategory.value = category.id;
       }
       inlineCategoryCreate.classList.add('hidden');
+      openCategoryInlineBtn.classList.remove('is-active');
+      openCategoryInlineBtn.setAttribute('aria-pressed', 'false');
       render();
       queueSync();
     });
@@ -2154,7 +2399,9 @@ function registerEvents() {
       }
       if (toggleQuickAddBtn) {
         toggleQuickAddBtn.setAttribute('aria-expanded', 'false');
+        toggleQuickAddBtn.setAttribute('aria-pressed', 'false');
         toggleQuickAddBtn.textContent = '펼치기';
+        toggleQuickAddBtn.classList.remove('is-active');
       }
     };
     const showQuickAdd = () => {
@@ -2163,7 +2410,9 @@ function registerEvents() {
       }
       if (toggleQuickAddBtn) {
         toggleQuickAddBtn.setAttribute('aria-expanded', 'true');
+        toggleQuickAddBtn.setAttribute('aria-pressed', 'true');
         toggleQuickAddBtn.textContent = '접기';
+        toggleQuickAddBtn.classList.add('is-active');
       }
       if (quickInput) {
         quickInput.focus();
@@ -2190,7 +2439,7 @@ function registerEvents() {
       state.todos.unshift(
         createTodo({
           title,
-          bucket: bucketSelect?.value || 'inbox',
+          bucket: bucketSelect?.value || 'bucket4',
           projectLaneId: '',
           priority: Number(prioritySelect?.value || 2),
           dueDate: dueDateInput?.value || '',
@@ -2207,7 +2456,7 @@ function registerEvents() {
         prioritySelect.value = '2';
       }
       if (bucketSelect) {
-        bucketSelect.value = 'inbox';
+        bucketSelect.value = 'bucket4';
       }
       showQuickAdd();
     });
@@ -2216,6 +2465,7 @@ function registerEvents() {
   if (calendarForm) {
     const hideCalendarForm = () => {
       calendarForm.hidden = true;
+      setCalendarMode('note');
       if (calendarTextInput) {
         calendarTextInput.value = '';
       }
@@ -2225,17 +2475,24 @@ function registerEvents() {
       if (calendarTodoDetailInput) {
         calendarTodoDetailInput.value = '';
       }
-      if (calendarTypeSelect) {
-        calendarTypeSelect.value = 'note';
-      }
-      applyCalendarFormMode();
     };
 
     calendarForm.hidden = true;
-    applyCalendarFormMode();
-    if (calendarTypeSelect) {
-      calendarTypeSelect.addEventListener('change', applyCalendarFormMode);
-    }
+    setCalendarMode('note');
+    calendarModeButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        if (button.dataset.calendarMode) {
+          setCalendarMode(button.dataset.calendarMode);
+          if (button.dataset.calendarMode === 'todo') {
+            if (calendarTodoTitleInput) {
+              calendarTodoTitleInput.focus();
+            }
+          } else if (calendarTextInput) {
+            calendarTextInput.focus();
+          }
+        }
+      });
+    });
     calendarForm.addEventListener('submit', (event) => {
       event.preventDefault();
       const date = String(calendarDateInput?.value || '').trim();
@@ -2264,7 +2521,7 @@ function registerEvents() {
           createTodo({
             title: todoTitle,
             details: todoDetail,
-            bucket: 'inbox',
+            bucket: 'bucket4',
             projectLaneId: '',
             priority: 2,
             dueDate: date,
@@ -2301,7 +2558,6 @@ function registerEvents() {
     [
       calendarDateInput,
       calendarTextInput,
-      calendarTypeSelect,
       calendarTodoTitleInput,
       calendarTodoDetailInput,
     ].forEach((element) => {
@@ -2317,14 +2573,28 @@ function registerEvents() {
   }
 
   if (prevMonthBtn) {
+    prevMonthBtn.setAttribute('aria-pressed', 'false');
     prevMonthBtn.addEventListener('click', () => {
+      prevMonthBtn.classList.add('is-active');
+      prevMonthBtn.setAttribute('aria-pressed', 'true');
+      setTimeout(() => {
+        prevMonthBtn.classList.remove('is-active');
+        prevMonthBtn.setAttribute('aria-pressed', 'false');
+      }, 120);
       state.currentMonth = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth() - 1, 1);
       render();
     });
   }
 
   if (nextMonthBtn) {
+    nextMonthBtn.setAttribute('aria-pressed', 'false');
     nextMonthBtn.addEventListener('click', () => {
+      nextMonthBtn.classList.add('is-active');
+      nextMonthBtn.setAttribute('aria-pressed', 'true');
+      setTimeout(() => {
+        nextMonthBtn.classList.remove('is-active');
+        nextMonthBtn.setAttribute('aria-pressed', 'false');
+      }, 120);
       state.currentMonth = new Date(state.currentMonth.getFullYear(), state.currentMonth.getMonth() + 1, 1);
       render();
     });
@@ -2417,6 +2687,7 @@ async function bootstrap() {
   ensureBucketSelectOptions();
   registerEvents();
   updateAuthUI();
+  await ensureHolidayDataForYear(state.currentMonth.getFullYear()).catch(() => {});
   render();
 
   const searchParams = new URLSearchParams(window.location.search);
@@ -2435,6 +2706,7 @@ bootstrap().catch(() => {
 });
 
 registerServiceWorker();
+
 
 
 

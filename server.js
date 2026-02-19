@@ -23,6 +23,13 @@ const OAUTH_REFRESH_SKEW_MS = 60 * 1000;
 const SECURITY_EVENT_LOG_PATH = process.env.SECURITY_EVENT_LOG_PATH || path.resolve(process.cwd(), 'security-events.log');
 const SECURITY_EVENTS_ENABLED = process.env.SECURITY_EVENTS_ENABLED !== 'false';
 const SESSION_ENCRYPTION_KEY_CONFIGURED = Boolean(process.env.SESSION_ENCRYPTION_KEY);
+const HOLIDAY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const HOLIDAY_FETCH_TIMEOUT_MS = 12_000;
+const HOLIDAY_FALLBACK_FEED_URL = 'https://calendar.google.com/calendar/ical/ko.south_korea%23holiday%40group.v.calendar.google.com/public/basic.ics';
+const HOLIDAY_FEED_URL =
+  process.env.HOLIDAY_FEED_URL || process.env.NAVER_HOLIDAY_FEED_URL || HOLIDAY_FALLBACK_FEED_URL;
+const HOLIDAY_CACHE = new Map();
+const HOLIDAY_FETCH_INFLIGHT = new Map();
 
 function getSecureEncryptionKey() {
   const raw = process.env.SESSION_ENCRYPTION_KEY || '';
@@ -80,6 +87,325 @@ function logSecurityEvent(eventCode, details = {}) {
   } catch {
     // best-effort logging
   }
+}
+
+function withTimeout(ms) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, ms);
+  return { controller, timeout };
+}
+
+function safeTrim(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function unescapeIcsValue(value) {
+  return value
+    .replace(/\\,/g, ',')
+    .replace(/\\;/g, ';')
+    .replace(/\\n/gi, '\n')
+    .replace(/\\\\/g, '\\');
+}
+
+function parseIcsDate(rawDate) {
+  if (!rawDate || typeof rawDate !== 'string') {
+    return '';
+  }
+  const match = rawDate.match(/(\d{4})(\d{2})(\d{2})/);
+  if (!match) {
+    return '';
+  }
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
+function parseDateFromUnknown(rawValue) {
+  if (!rawValue) {
+    return '';
+  }
+
+  const value = String(rawValue).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const compactMatch = value.match(/(\d{4})(\d{2})(\d{2})/);
+  return compactMatch ? `${compactMatch[1]}-${compactMatch[2]}-${compactMatch[3]}` : '';
+}
+
+function pickHolidayDate(item, year) {
+  if (!item || typeof item !== 'object') {
+    return '';
+  }
+
+  const yearText = String(year);
+  const candidates = [
+    item.date,
+    item.start,
+    item.startDate,
+    item.dtstart,
+    item.start_at,
+    item.eventDate,
+    item.holidayDate,
+  ];
+
+  for (const candidate of candidates) {
+    let resolved = candidate;
+    if (resolved && typeof resolved === 'object') {
+      resolved = resolved.date || resolved.dateTime || resolved.value || resolved.datetime;
+    }
+    const dateText = parseDateFromUnknown(resolved);
+    if (!dateText) {
+      continue;
+    }
+    if (dateText.startsWith(`${yearText}-`)) {
+      return dateText;
+    }
+  }
+  return '';
+}
+
+function parseHolidayName(item) {
+  const candidates = [item.summary, item.name, item.title, item.holidayName, item.label];
+  for (const candidate of candidates) {
+    const text = safeTrim(candidate);
+    if (text) {
+      return text;
+    }
+  }
+  return '';
+}
+
+function parseIcsHolidays(text, year) {
+  const unfolded = [];
+  const rawLines = String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n');
+
+  for (const line of rawLines) {
+    if ((line.startsWith(' ') || line.startsWith('\t')) && unfolded.length > 0) {
+      unfolded[unfolded.length - 1] += line.slice(1);
+      continue;
+    }
+    unfolded.push(line);
+  }
+
+  const holidays = {};
+  let inEvent = false;
+  let event = { date: '', name: '' };
+
+  for (const line of unfolded) {
+    if (line === 'BEGIN:VEVENT') {
+      inEvent = true;
+      event = { date: '', name: '' };
+      continue;
+    }
+
+    if (line === 'END:VEVENT') {
+      if (inEvent && event.date && event.name) {
+        holidays[event.date] = event.name;
+      }
+      inEvent = false;
+      continue;
+    }
+
+    if (!inEvent || !line.includes(':')) {
+      continue;
+    }
+
+    const sepIndex = line.indexOf(':');
+    const field = line.slice(0, sepIndex);
+    const value = line.slice(sepIndex + 1);
+    const fieldName = field.split(';')[0];
+
+    if (fieldName === 'SUMMARY') {
+      event.name = safeTrim(unescapeIcsValue(value));
+      continue;
+    }
+
+    if (fieldName.startsWith('DTSTART')) {
+      const dateText = parseIcsDate(value);
+      event.date = dateText;
+      continue;
+    }
+  }
+
+  return holidays;
+}
+
+function parseJsonHolidays(text, year) {
+  const payload = safeTrim(text) ? JSON.parse(text) : null;
+  if (!payload) {
+    return {};
+  }
+
+  const yearText = String(year);
+  let items = Array.isArray(payload) ? payload : null;
+  if (!items && Array.isArray(payload?.holidays)) {
+    items = payload.holidays;
+  } else if (!items && Array.isArray(payload?.items)) {
+    items = payload.items;
+  } else if (!items && payload?.holidays && typeof payload.holidays === 'object' && !Array.isArray(payload.holidays)) {
+    const map = {};
+    Object.entries(payload.holidays).forEach(([dateText, name]) => {
+      if (typeof dateText === 'string' && parseDateFromUnknown(dateText).startsWith(`${yearText}-`) && safeTrim(name)) {
+        map[parseDateFromUnknown(dateText)] = safeTrim(name);
+      }
+    });
+    return map;
+  }
+  if (!Array.isArray(items)) {
+    return {};
+  }
+
+  const holidays = {};
+  for (const item of items) {
+    const dateText = pickHolidayDate(item, year);
+    if (!dateText || !dateText.startsWith(`${yearText}-`)) {
+      continue;
+    }
+    const name = parseHolidayName(item);
+    if (!name) {
+      continue;
+    }
+    holidays[dateText] = name;
+  }
+  return holidays;
+}
+
+function normalizeHolidaySourceUrl(year) {
+  const rawUrl = safeTrim(HOLIDAY_FEED_URL);
+  if (!rawUrl) {
+    return '';
+  }
+
+  let candidate = rawUrl.replace('{YYYY}', String(year)).replace('{year}', String(year));
+  if (!/\{year\}|\{YYYY\}/i.test(rawUrl) && !/[?&]year=/.test(candidate)) {
+    const sep = candidate.includes('?') ? '&' : '?';
+    candidate = `${candidate}${sep}year=${year}`;
+  }
+
+  return candidate;
+}
+
+function shouldNormalizeByYear(key, year) {
+  return typeof key === 'string' && key.startsWith(`${year}-`);
+}
+
+async function fetchHolidaysFromNaver(year) {
+  const sourceUrl = normalizeHolidaySourceUrl(year);
+  if (!sourceUrl) {
+    return {
+      year,
+      holidays: {},
+      fallback: true,
+      reason: 'source_not_configured',
+      source: '',
+    };
+  }
+
+  const { controller, timeout } = withTimeout(HOLIDAY_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(sourceUrl, {
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      return {
+        year,
+        holidays: {},
+        fallback: true,
+        reason: `http_${response.status}`,
+        source: sourceUrl,
+      };
+    }
+
+    const text = await response.text();
+    const trimmed = safeTrim(text);
+    if (!trimmed) {
+      return {
+        year,
+        holidays: {},
+        fallback: true,
+        reason: 'empty_response',
+        source: sourceUrl,
+      };
+    }
+
+    let holidays = {};
+    try {
+      if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.includes('"holidays"')) {
+        holidays = parseJsonHolidays(trimmed, year);
+      } else {
+        holidays = parseIcsHolidays(trimmed, year);
+      }
+    } catch (error) {
+      holidays = {};
+    }
+
+    return {
+      year,
+      holidays,
+      fallback: false,
+      source: sourceUrl,
+    };
+  } catch (error) {
+    return {
+      year,
+      holidays: {},
+      fallback: true,
+      reason: error && error.name === 'AbortError' ? 'timeout' : 'fetch_failed',
+      source: sourceUrl,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getHolidaysByYear(year) {
+  const key = String(year);
+  const cached = HOLIDAY_CACHE.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  if (HOLIDAY_FETCH_INFLIGHT.has(key)) {
+    return HOLIDAY_FETCH_INFLIGHT.get(key);
+  }
+
+  const payload = fetchHolidaysFromNaver(year)
+    .then((result) => {
+      const holidayMap = {};
+      const source = result?.holidays || {};
+      for (const [dateText, name] of Object.entries(source)) {
+        if (typeof dateText === 'string' && shouldNormalizeByYear(dateText, year) && safeTrim(name)) {
+          holidayMap[dateText] = safeTrim(name);
+        }
+      }
+
+      HOLIDAY_CACHE.set(key, {
+        fetchedAt: Date.now(),
+        expiresAt: Date.now() + HOLIDAY_CACHE_TTL_MS,
+        data: {
+          year,
+          holidays: holidayMap,
+          source: result?.source || '',
+          fallback: result?.fallback === true,
+          reason: result?.reason || '',
+        },
+      });
+
+      return HOLIDAY_CACHE.get(key).data;
+    })
+    .finally(() => {
+      HOLIDAY_FETCH_INFLIGHT.delete(key);
+    });
+
+  HOLIDAY_FETCH_INFLIGHT.set(key, payload);
+  return payload;
 }
 
 function encryptToken(raw) {
@@ -484,27 +810,15 @@ function ensureDatabase() {
     .then(() => ensureStateSchemas());
 }
 
-const BUCKET_KEYS = ['today', 'project', 'routine', 'inbox', 'bucket5', 'bucket6', 'bucket7', 'bucket8'];
-const DEFAULT_BUCKET_LABELS = {
-  today: '오늘',
-  project: '프로젝트',
-  routine: '루틴',
-  inbox: 'inbox',
-  bucket5: '버킷 5',
-  bucket6: '버킷 6',
-  bucket7: '버킷 7',
-  bucket8: '버킷 8',
-};
-const DEFAULT_BUCKET_VISIBILITY = {
-  today: true,
-  project: true,
-  routine: true,
-  inbox: true,
-  bucket5: false,
-  bucket6: false,
-  bucket7: false,
-  bucket8: false,
-};
+const BUCKET_KEYS = ['bucket1', 'bucket2', 'bucket3', 'bucket4', 'bucket5', 'bucket6', 'bucket7', 'bucket8'];
+const DEFAULT_BUCKET_LABELS = BUCKET_KEYS.reduce((acc, bucket, index) => {
+  acc[bucket] = `버킷 ${index + 1}`;
+  return acc;
+}, {});
+const DEFAULT_BUCKET_VISIBILITY = BUCKET_KEYS.reduce((acc, bucket, index) => {
+  acc[bucket] = index < 4;
+  return acc;
+}, {});
 
 function hasBrokenText(value) {
   const text = String(value || '');
@@ -596,7 +910,7 @@ function normalizeBucketVisibility(input = {}) {
   }, {});
 
   if (!BUCKET_KEYS.some((bucket) => visibility[bucket] !== false)) {
-    visibility.today = true;
+    visibility.bucket1 = true;
   }
   return visibility;
 }
@@ -622,7 +936,7 @@ function normalizeProjectLanes(input = []) {
     if (hasBrokenText(name)) {
       return;
     }
-    const bucket = typeof lane.bucket === 'string' && BUCKET_KEYS.includes(lane.bucket) ? lane.bucket : 'project';
+    const bucket = typeof lane.bucket === 'string' && BUCKET_KEYS.includes(lane.bucket) ? lane.bucket : 'bucket2';
     const duplicated = normalized.some(
       (item) => item.bucket === bucket && item.name.toLowerCase() === name.toLowerCase(),
     );
@@ -786,62 +1100,18 @@ async function loadUserById(userId) {
 }
 
 async function upsertUser(profile) {
-  const columns = await all('PRAGMA table_info(users)');
-  const hasNaverId = columns.some((column) => column?.name === 'naver_id');
-
-  const attempts = hasNaverId
-    ? [
-        {
-          sql: `INSERT INTO users (naver_id, kakao_id, nickname, email, profile_image, updated_at, last_login_at)
-                VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
-                ON CONFLICT(kakao_id)
-                DO UPDATE SET
-                  nickname = excluded.nickname,
-                  email = excluded.email,
-                  profile_image = excluded.profile_image,
-                  updated_at = datetime('now'),
-                  last_login_at = datetime('now')`,
-          params: [`kakao-${profile.kakaoId}`, profile.kakaoId, profile.nickname, profile.email, profile.profileImage],
-        },
-      ]
-    : [];
-
-  attempts.push({
-    sql: `INSERT INTO users (kakao_id, nickname, email, profile_image, updated_at, last_login_at)
-          VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
-          ON CONFLICT(kakao_id)
-          DO UPDATE SET
-            nickname = excluded.nickname,
-            email = excluded.email,
-            profile_image = excluded.profile_image,
-            updated_at = datetime('now'),
-            last_login_at = datetime('now')`,
-    params: [profile.kakaoId, profile.nickname, profile.email, profile.profileImage],
-  });
-
-  let failedAttempt = false;
-  for (let i = 0; i < attempts.length; i++) {
-    try {
-      await run(attempts[i].sql, attempts[i].params);
-      failedAttempt = false;
-      break;
-    } catch (error) {
-      const message = error && error.message ? String(error.message) : '';
-      const isRetryable =
-        message.includes('no column named kakao_id') ||
-        message.includes('no column named naver_id') ||
-        message.includes('NOT NULL constraint failed: users.naver_id');
-      if (i < attempts.length - 1 && isRetryable) {
-        failedAttempt = true;
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  if (failedAttempt) {
-    // Should not happen; if it does, fall through to preserve current behavior.
-  }
+  await run(
+    `INSERT INTO users (kakao_id, nickname, email, profile_image, updated_at, last_login_at)
+           VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
+           ON CONFLICT(kakao_id)
+           DO UPDATE SET
+             nickname = excluded.nickname,
+             email = excluded.email,
+             profile_image = excluded.profile_image,
+             updated_at = datetime('now'),
+             last_login_at = datetime('now')`,
+    [profile.kakaoId, profile.nickname, profile.email, profile.profileImage],
+  );
 
   return get('SELECT id, kakao_id, nickname, email, profile_image FROM users WHERE kakao_id = ?', [
     profile.kakaoId,
@@ -1364,6 +1634,39 @@ app.use((req, res, next) => {
 
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
+});
+
+app.get('/api/holidays', async (req, res) => {
+  const requestedYear = Number(req.query.year);
+  const year = Number.isInteger(requestedYear) ? requestedYear : new Date().getFullYear();
+  if (!Number.isInteger(year) || year < 1970 || year > 2600) {
+    res.status(400).json({ error: 'invalid_year' });
+    return;
+  }
+
+  try {
+    const data = await getHolidaysByYear(year);
+    if (!data || typeof data !== 'object') {
+      res.status(500).json({ error: 'failed_to_load_holidays' });
+      return;
+    }
+
+    res.json({
+      ...data,
+      year,
+      source: data.source || '',
+      holidays: data.holidays || {},
+    });
+  } catch (error) {
+    logSecurityEvent('holidays_fetch_failed', {
+      ip: req.ip,
+      path: req.path,
+      method: req.method,
+      error: error && error.message ? error.message : String(error),
+      year,
+    });
+    res.status(500).json({ error: 'failed_to_load_holidays' });
+  }
 });
 
 app.use(

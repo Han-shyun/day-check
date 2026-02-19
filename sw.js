@@ -1,5 +1,5 @@
 const CACHE_NAME = 'day-check-cache-v3';
-const APP_SHELL = ['/', '/index.html', '/src/style.css?v=naver-theme', '/src/main.js', '/manifest.webmanifest'];
+const APP_SHELL = ['/', '/index.html', '/src/style.css?v=day-check-style', '/src/main.js', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

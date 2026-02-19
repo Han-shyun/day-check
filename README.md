@@ -1,4 +1,4 @@
-# day-check
+﻿# day-check
 
 TickTick처럼 항목을 강제로 여러 화면/분류로 나누지 않고, **한 페이지에서 투두를 빠르게 쌓고 나중에 분류를 붙이는** 개인용 일정/체크리스트 앱입니다.
 
@@ -86,8 +86,15 @@ https://yourname.github.io/day-check/
 ## 서버 연동 실행 방법
 1. npm install
 2. .env 파일에 KAKAO_CLIENT_ID, KAKAO_CLIENT_SECRET 등록
-3. npm run start
+3. npm run server:start (운영 모드) 또는 npm run server:dev (개발 모드)
 4. 브라우저에서 http://localhost:4173 접속
+
+### 서버 재시작 정리
+- 개발 중 변경 즉시 반영: `npm run server:dev`
+- 변경 반영 후 재시작: `npm run server:restart`
+- 운영 시작: `npm run server:start`
+
+`server:restart`는 현재 실행 중인 `server.js` 프로세스를 정리한 뒤, 개발 모드로 다시 띄웁니다.
 
 ## 환경변수
 - KAKAO_CLIENT_ID: 카카오 앱 client_id
@@ -98,6 +105,7 @@ https://yourname.github.io/day-check/
 - SECURITY_EVENTS_ENABLED: 보안 이벤트 로깅 여부(default true)
 - SESSION_SECRET: 세션 고정 키(현재 구현은 메모리 세션)
 - DATABASE_PATH: DB 경로(기본: daycheck.sqlite)
+- HOLIDAY_FEED_URL: 공휴일 피드(ICS/JSON) URL (예: https://calendar.google.com/...{year}.ics 또는 ...?year={year}). 미설정 시 Google 대한민국 공휴일 ICS를 기본 사용
 - DATABASE_URL/FRONTEND_BASE_URL는 추후 확장용
 
 ## 보안 반영 요약 (2026-02-18)
