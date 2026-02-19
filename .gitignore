@@ -1,0 +1,13 @@
+# Runtime logs and temp artifacts
+security-events.log
+tmp_registerevents.txt
+server.log
+*.pid
+
+# Local DB runtime sidecars
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+
+# Local backup snapshots
+server/.modularization_backup_phase1/

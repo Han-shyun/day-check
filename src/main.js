@@ -1552,8 +1552,8 @@ function registerBucketTitleEditors() {
 
 function sortTodos(list) {
   return [...list].sort((a, b) => {
-    if (b.priority !== a.priority) {
-      return b.priority - a.priority;
+    if (a.priority !== b.priority) {
+      return a.priority - b.priority;
     }
     return new Date(a.createdAt) - new Date(b.createdAt);
   });
@@ -1911,7 +1911,17 @@ function getTodayActiveNoteEntries() {
   const today = toLocalIsoDate(new Date());
   return state.calendarItems
     .filter((item) => item.type === 'note' && isDateInCalendarRange(today, item.date, item.endDate || item.date))
-    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    .sort((a, b) => {
+      const aIsLong = (a.endDate || a.date) > a.date;
+      const bIsLong = (b.endDate || b.date) > b.date;
+      if (aIsLong !== bIsLong) {
+        return aIsLong ? -1 : 1;
+      }
+      if (a.date !== b.date) {
+        return new Date(a.date) - new Date(b.date);
+      }
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
 }
 
 function renderTodayNoteHighlights(listEl, notes) {
@@ -1944,8 +1954,9 @@ function renderTodayNoteHighlights(listEl, notes) {
     focusBtn.className = 'complete';
     focusBtn.textContent = '캘린더';
     focusBtn.addEventListener('click', () => {
-      state.selectedDate = toLocalIsoDate(new Date());
-      state.currentMonth = new Date();
+      state.selectedDate = note.date;
+      const monthDate = new Date(note.date);
+      state.currentMonth = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
       render();
     });
 
@@ -2012,6 +2023,7 @@ function getEntriesForDate(dateText) {
       type: item.type,
       text: item.text,
       source: 'calendar',
+      createdAt: item.createdAt,
       startDate: item.date,
       endDate: item.endDate || item.date,
       isRange: (item.endDate || item.date) > item.date,
@@ -2031,6 +2043,16 @@ function getEntriesForDate(dateText) {
       text: `${todo.title} (${getTodoGroupLabel(todo)})`,
       source: 'todo',
     }));
+
+  noteEntries.sort((a, b) => {
+    if (a.isRange !== b.isRange) {
+      return a.isRange ? -1 : 1;
+    }
+    if (a.startDate !== b.startDate) {
+      return new Date(a.startDate) - new Date(b.startDate);
+    }
+    return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+  });
 
   return [...noteEntries, ...todoEntries];
 }
@@ -2928,8 +2950,6 @@ bootstrap().catch(() => {
 });
 
 registerServiceWorker();
-
-
 
 
 
