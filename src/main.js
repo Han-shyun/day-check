@@ -1,4 +1,17 @@
-﻿const TODO_STORAGE_KEY = 'day-check.main.todos.v4';
+﻿import {
+  clampCalendarRangeEnd,
+  endOfWeek,
+  formatCalendarRange,
+  formatDisplayDate,
+  formatDisplayDateTime,
+  getRangeDaysInclusive,
+  inCurrentWeek,
+  isDateInCalendarRange,
+  parseIsoDate,
+  startOfWeek,
+  toLocalIsoDate,
+} from './core/date-utils.js';
+const TODO_STORAGE_KEY = 'day-check.main.todos.v4';
 const DONE_STORAGE_KEY = 'day-check.main.doneLog.v1';
 const CALENDAR_STORAGE_KEY = 'day-check.main.calendarItems.v1';
 const CATEGORY_STORAGE_KEY = 'day-check.main.categories.v1';
@@ -7,6 +20,7 @@ const BUCKET_ORDER_STORAGE_KEY = 'day-check.main.bucketOrder.v1';
 const BUCKET_SIZES_STORAGE_KEY = 'day-check.main.bucketSizes.v1';
 const BUCKET_VISIBILITY_STORAGE_KEY = 'day-check.main.bucketVisibility.v1';
 const PROJECT_LANES_STORAGE_KEY = 'day-check.main.projectLanes.v1';
+const USER_PROFILE_STORAGE_KEY = 'day-check.main.userProfile.v1';
 const LEGACY_TODO_KEYS = ['day-check.main.todos.v3', 'day-check.main.todos.v2'];
 
 const API_BASE = '/api';
@@ -26,6 +40,10 @@ const defaultBucketVisibility = buckets.reduce((acc, bucket, index) => {
   acc[bucket] = index < 4;
   return acc;
 }, {});
+const defaultUserProfile = {
+  nickname: '',
+  honorific: '님',
+};
 
 const state = {
   todos: [],
@@ -37,6 +55,7 @@ const state = {
   bucketSizes: {},
   bucketVisibility: { ...defaultBucketVisibility },
   projectLanes: [],
+  userProfile: { ...defaultUserProfile },
   currentMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
   selectedDate: '',
   version: 0,
@@ -101,6 +120,17 @@ const selectedDateSummary = document.getElementById('selectedDateSummary');
 const selectedCreatedList = document.getElementById('selectedCreatedList');
 const selectedCompletedList = document.getElementById('selectedCompletedList');
 const selectedCalendarNoteList = document.getElementById('selectedCalendarNoteList');
+const selectedDateNoteInput = document.getElementById('selectedDateNoteInput');
+const selectedDateNoteStartDate = document.getElementById('selectedDateNoteStartDate');
+const selectedDateNoteEndDate = document.getElementById('selectedDateNoteEndDate');
+const addSelectedDateNoteBtn = document.getElementById('addSelectedDateNoteBtn');
+const userAliasPreviewEl = document.getElementById('userAliasPreview');
+const toggleProfileEditorBtn = document.getElementById('toggleProfileEditorBtn');
+const profileEditorEl = document.getElementById('profileEditor');
+const profileNicknameInput = document.getElementById('profileNicknameInput');
+const profileHonorificInput = document.getElementById('profileHonorificInput');
+const saveProfileBtn = document.getElementById('saveProfileBtn');
+const cancelProfileBtn = document.getElementById('cancelProfileBtn');
 
 const priorityLabel = {
   3: '낮음',
@@ -135,19 +165,6 @@ function hasBrokenText(value) {
     return true;
   }
   return /\?[^\s"'`<>()[\]{}=]{1,3}/u.test(text);
-}
-
-function toLocalIsoDate(date) {
-  const d = new Date(date);
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 10);
-}
-
-function parseIsoDate(isoText) {
-  if (!isoText) {
-    return '';
-  }
-  return isoText.slice(0, 10);
 }
 
 function getHolidayFallbackLabel(date) {
@@ -245,51 +262,6 @@ function getWeekendType(date) {
   return '';
 }
 
-function formatDisplayDate(isoText) {
-  if (!isoText) {
-    return '-';
-  }
-  return new Intl.DateTimeFormat('ko-KR', {
-    month: 'numeric',
-    day: 'numeric',
-    weekday: 'short',
-  }).format(new Date(isoText));
-}
-
-function formatDisplayDateTime(isoText) {
-  if (!isoText) {
-    return '-';
-  }
-  return new Intl.DateTimeFormat('ko-KR', {
-    month: 'numeric',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(new Date(isoText));
-}
-
-function startOfWeek(date) {
-  const d = new Date(date);
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-function endOfWeek(date) {
-  const d = startOfWeek(date);
-  d.setDate(d.getDate() + 6);
-  d.setHours(23, 59, 59, 999);
-  return d;
-}
-
-function inCurrentWeek(isoDateText) {
-  const target = new Date(isoDateText);
-  return target >= startOfWeek(new Date()) && target <= endOfWeek(new Date());
-}
-
 function safeJsonParse(key) {
   try {
     return JSON.parse(localStorage.getItem(key) || '[]');
@@ -337,6 +309,7 @@ function loadStateFromLocal() {
   const bucketSizes = safeJsonParse(BUCKET_SIZES_STORAGE_KEY);
   const bucketVisibility = safeJsonParse(BUCKET_VISIBILITY_STORAGE_KEY);
   const projectLanes = safeJsonParse(PROJECT_LANES_STORAGE_KEY);
+  const userProfile = safeJsonParse(USER_PROFILE_STORAGE_KEY);
 
   const normalizedTodos = normalizeTodos(Array.isArray(todos) ? todos : []);
   if (normalizedTodos.length === 0) {
@@ -375,6 +348,7 @@ function loadStateFromLocal() {
   state.bucketSizes = normalizeBucketSizes(bucketSizes);
   state.bucketVisibility = normalizeBucketVisibility(bucketVisibility);
   state.projectLanes = normalizeProjectLanes(projectLanes);
+  state.userProfile = normalizeUserProfile(userProfile);
 
   ensureCategoryIntegrity();
   ensureDateInState();
@@ -417,16 +391,9 @@ function normalizeBucketOrder(input = []) {
   return [...unique, ...missing];
 }
 
-function normalizeBucketSizes(input = {}) {
-  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+function normalizeBucketSizes() {
   return buckets.reduce((acc, bucket) => {
-    const raw = getBucketFieldValue(source, bucket);
-    const width = Number(raw?.width || 0);
-    const height = Number(raw?.height || 0);
-    acc[bucket] = {
-      width: Number.isFinite(width) && width >= 220 ? Math.round(width) : 0,
-      height: Number.isFinite(height) && height >= 220 ? Math.round(height) : 0,
-    };
+    acc[bucket] = { width: 0, height: 0 };
     return acc;
   }, {});
 }
@@ -529,10 +496,23 @@ function normalizeCalendarItems(items) {
     .map((item) => ({
       id: item.id,
       date: parseIsoDate(item.date),
+      endDate: clampCalendarRangeEnd(item.date, item.endDate || item.date),
       type: item.type === 'note' ? 'note' : 'todo',
       text: String(item.text || '').trim(),
       createdAt: item.createdAt || new Date().toISOString(),
     }));
+}
+
+function normalizeUserProfile(input = {}) {
+  const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const nicknameRaw = typeof source.nickname === 'string' ? source.nickname.trim() : '';
+  const honorificRaw = typeof source.honorific === 'string' ? source.honorific.trim() : '';
+  const nickname = nicknameRaw.slice(0, 20);
+  const honorific = (honorificRaw || defaultUserProfile.honorific).slice(0, 12);
+  return {
+    nickname,
+    honorific: honorific || defaultUserProfile.honorific,
+  };
 }
 
 function normalizeCategoryState(input) {
@@ -615,6 +595,7 @@ function saveLocalState() {
   localStorage.setItem(BUCKET_SIZES_STORAGE_KEY, JSON.stringify(state.bucketSizes));
   localStorage.setItem(BUCKET_VISIBILITY_STORAGE_KEY, JSON.stringify(state.bucketVisibility));
   localStorage.setItem(PROJECT_LANES_STORAGE_KEY, JSON.stringify(state.projectLanes));
+  localStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(state.userProfile));
 }
 
 function ensureCategoryIntegrity() {
@@ -954,11 +935,14 @@ function applyBucketVisibility() {
 
   if (addProjectColumnBtn) {
     addProjectColumnBtn.classList.remove('hidden');
-    addProjectColumnBtn.textContent = '+';
+    addProjectColumnBtn.textContent = '버킷 추가';
+    addProjectColumnBtn.disabled = activeCount >= buckets.length;
   }
 
   if (removeProjectColumnBtn) {
-    removeProjectColumnBtn.classList.add('hidden');
+    removeProjectColumnBtn.classList.remove('hidden');
+    removeProjectColumnBtn.textContent = '버킷 제거';
+    removeProjectColumnBtn.disabled = activeCount <= 1;
   }
 }
 
@@ -969,9 +953,8 @@ function applyBucketSizes() {
       return;
     }
 
-    const size = state.bucketSizes?.[bucket] || {};
     column.style.width = '';
-    column.style.height = Number(size.height) > 0 ? `${size.height}px` : '';
+    column.style.height = '';
   });
 }
 
@@ -991,40 +974,10 @@ function syncBucketOrderFromDom() {
 }
 
 function registerBucketResizeObserver() {
-  if (!boardEl || columnResizeObserver) {
-    return;
+  if (columnResizeObserver) {
+    columnResizeObserver.disconnect();
+    columnResizeObserver = null;
   }
-
-  columnResizeObserver = new ResizeObserver((entries) => {
-    let changed = false;
-
-    entries.forEach((entry) => {
-      const bucket = entry.target?.dataset?.bucket;
-      if (!entry.target.style.width && !entry.target.style.height) {
-        return;
-      }
-
-      const width = Math.round(entry.contentRect.width);
-      const height = Math.round(entry.contentRect.height);
-      if (bucket && buckets.includes(bucket)) {
-        const prev = state.bucketSizes?.[bucket] || {};
-        if (Number(prev.height || 0) === height) {
-          return;
-        }
-        state.bucketSizes[bucket] = { width: 0, height };
-        changed = true;
-        return;
-      }
-    });
-
-    if (changed) {
-      queueSync();
-    }
-  });
-
-  boardEl.querySelectorAll('.column[data-bucket]').forEach((column) => {
-    columnResizeObserver.observe(column);
-  });
 }
 
 function renderProjectLaneColumns() {
@@ -1203,10 +1156,6 @@ function registerBucketDragControls() {
 }
 
 function registerProjectColumnControls() {
-  if (removeProjectColumnBtn) {
-    removeProjectColumnBtn.classList.add('hidden');
-  }
-
   if (addProjectColumnBtn) {
     addProjectColumnBtn.setAttribute('aria-label', '버킷 추가');
     addProjectColumnBtn.setAttribute('aria-pressed', 'false');
@@ -1225,6 +1174,32 @@ function registerProjectColumnControls() {
       }, 120);
 
       showToast(`${getBucketLabel(bucket)} 버킷 추가됨`, 'success');
+      render();
+      queueSync();
+    });
+  }
+
+  if (removeProjectColumnBtn) {
+    removeProjectColumnBtn.setAttribute('aria-label', '버킷 제거');
+    removeProjectColumnBtn.setAttribute('aria-pressed', 'false');
+    removeProjectColumnBtn.addEventListener('click', () => {
+      const visibility = normalizeBucketVisibility(state.bucketVisibility);
+      const order = normalizeBucketOrder(state.bucketOrder);
+      const active = order.filter((bucket) => visibility[bucket] !== false);
+      const target = active[active.length - 1];
+      if (!target || !removeBucket(target)) {
+        showToast('최소 1개 버킷은 남아 있어야 합니다.', 'error');
+        return;
+      }
+
+      removeProjectColumnBtn.classList.add('is-active');
+      removeProjectColumnBtn.setAttribute('aria-pressed', 'true');
+      setTimeout(() => {
+        removeProjectColumnBtn.classList.remove('is-active');
+        removeProjectColumnBtn.setAttribute('aria-pressed', 'false');
+      }, 120);
+
+      showToast(`${getBucketLabel(target)} 버킷을 제거했습니다.`, 'success');
       render();
       queueSync();
     });
@@ -1313,23 +1288,7 @@ function registerBucketLaneControls() {
         hideLaneCreate();
       }
     });
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.className = 'column-remove-btn bucket-remove-btn';
-    removeBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 버킷 삭제`);
-    removeBtn.textContent = '×';
-    removeBtn.addEventListener('click', () => {
-      if (!removeBucket(bucket)) {
-        showToast('최소 1개 버킷은 남아 있어야 합니다.', 'error');
-        return;
-      }
-      showToast(`${getBucketLabel(bucket)} 버킷을 제거했습니다.`, 'success');
-      render();
-      queueSync();
-    });
-
     actions.insertBefore(laneCreate, actions.firstChild);
-    actions.insertBefore(removeBtn, actions.firstChild);
     actions.insertBefore(addBtn, actions.firstChild);
   });
 }
@@ -1661,10 +1620,13 @@ function createTodo({
   };
 }
 
-function createCalendarItem(date, type, text) {
+function createCalendarItem(date, type, text, endDate = date) {
+  const start = parseIsoDate(date);
+  const safeEndDate = clampCalendarRangeEnd(start, endDate);
   return {
     id: crypto.randomUUID(),
-    date,
+    date: start,
+    endDate: safeEndDate,
     type,
     text,
     createdAt: new Date().toISOString(),
@@ -1758,6 +1720,26 @@ function getCookie(name) {
   return '';
 }
 
+function getProfileDisplayName() {
+  const profile = normalizeUserProfile(state.userProfile);
+  if (profile.nickname) {
+    return `${profile.nickname}${profile.honorific}`;
+  }
+  if (isServerSync && authUser) {
+    const fallback = authUser.nickname || authUser.email || '';
+    return fallback ? `${fallback}${profile.honorific}` : '';
+  }
+  return '';
+}
+
+function updateProfileAliasUI() {
+  if (!userAliasPreviewEl) {
+    return;
+  }
+  const label = getProfileDisplayName();
+  userAliasPreviewEl.textContent = label || '호칭 미설정';
+}
+
 function applyAuthState(me) {
   if (!me || !me.authenticated) {
     isServerSync = false;
@@ -1775,6 +1757,7 @@ function updateAuthUI() {
     return;
   }
 
+  updateProfileAliasUI();
   if (isServerSync && authUser) {
     const label = authUser.nickname || authUser.email || `kakao-${authUser.kakaoId || ''}`;
     authStatusEl.textContent = `로그인 상태: ${label}`;
@@ -1919,6 +1902,7 @@ function render() {
   renderCalendar();
   renderSelectedDatePanel();
   renderWeeklyReport();
+  updateProfileAliasUI();
 }
 
 function renderTodoComposer() {
@@ -1956,10 +1940,73 @@ function bindTodoDetailsInput(detailInput, todo) {
   });
 }
 
+function getTodayActiveNoteEntries() {
+  const today = toLocalIsoDate(new Date());
+  return state.calendarItems
+    .filter((item) => item.type === 'note' && isDateInCalendarRange(today, item.date, item.endDate || item.date))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+function renderTodayNoteHighlights(listEl, notes) {
+  notes.forEach((note) => {
+    const item = document.createElement('li');
+    item.className = 'todo-item todo-item-note';
+
+    const main = document.createElement('div');
+    main.className = 'todo-main';
+
+    const title = document.createElement('span');
+    title.className = 'title';
+    title.textContent = `오늘 메모 · ${note.text}`;
+
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = note.date === note.endDate
+      ? `일정일: ${note.date}`
+      : `장기 일정: ${note.date} ~ ${note.endDate}`;
+
+    main.append(title, meta);
+
+    const controls = document.createElement('div');
+    controls.className = 'todo-controls';
+
+    const actions = document.createElement('div');
+    actions.className = 'actions';
+
+    const focusBtn = document.createElement('button');
+    focusBtn.type = 'button';
+    focusBtn.className = 'complete';
+    focusBtn.textContent = '캘린더';
+    focusBtn.addEventListener('click', () => {
+      state.selectedDate = toLocalIsoDate(new Date());
+      state.currentMonth = new Date();
+      render();
+    });
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'delete';
+    deleteBtn.textContent = '삭제';
+    deleteBtn.addEventListener('click', () => {
+      state.calendarItems = state.calendarItems.filter((entry) => entry.id !== note.id);
+      render();
+      queueSync();
+    });
+
+    actions.append(focusBtn, deleteBtn);
+    controls.appendChild(actions);
+
+    item.append(main, controls);
+    listEl.appendChild(item);
+  });
+}
+
 function renderTodoList() {
+  const todayNotes = getTodayActiveNoteEntries();
   const sorted = sortTodos(state.todos);
-  todoCountEl.textContent = String(sorted.length);
+  todoCountEl.textContent = String(todayNotes.length + sorted.length);
   todoListEl.innerHTML = '';
+  renderTodayNoteHighlights(todoListEl, todayNotes);
   renderTodoItems(todoListEl, sorted);
 }
 
@@ -1992,6 +2039,24 @@ function countDailyStats(dateText) {
 }
 
 function getEntriesForDate(dateText) {
+  const noteEntries = state.calendarItems
+    .filter((item) => isDateInCalendarRange(dateText, item.date, item.endDate || item.date))
+    .map((item) => ({
+      id: item.id,
+      type: item.type,
+      text: item.text,
+      source: 'calendar',
+      startDate: item.date,
+      endDate: item.endDate || item.date,
+      isRange: (item.endDate || item.date) > item.date,
+      rangePosition:
+        dateText === item.date
+          ? 'start'
+          : dateText === (item.endDate || item.date)
+            ? 'end'
+            : 'middle',
+    }));
+
   const todoEntries = state.todos
     .filter((todo) => todo.dueDate === dateText)
     .map((todo) => ({
@@ -2001,16 +2066,7 @@ function getEntriesForDate(dateText) {
       source: 'todo',
     }));
 
-  const noteEntries = state.calendarItems
-    .filter((item) => item.date === dateText)
-    .map((item) => ({
-      id: item.id,
-      type: item.type,
-      text: item.text,
-      source: 'calendar',
-    }));
-
-  return [...todoEntries, ...noteEntries];
+  return [...noteEntries, ...todoEntries];
 }
 
 function addEmptyMessage(listEl, message) {
@@ -2033,12 +2089,31 @@ function renderSelectedDatePanel() {
 
   const createdTodos = sortTodos(state.todos.filter((todo) => parseIsoDate(todo.createdAt) === targetDate));
   const completedTodos = state.doneLog.filter((log) => parseIsoDate(log.completedAt) === targetDate);
-  const notes = state.calendarItems.filter((item) => item.date === targetDate);
+  const notes = state.calendarItems.filter((item) =>
+    isDateInCalendarRange(targetDate, item.date, item.endDate || item.date),
+  );
 
   selectedDateSummary.textContent = `작성 ${createdTodos.length}개 / 완료 ${completedTodos.length}개 / 메모 ${notes.length}개`;
   selectedCreatedList.innerHTML = '';
   selectedCompletedList.innerHTML = '';
   selectedCalendarNoteList.innerHTML = '';
+  if (selectedDateNoteInput) {
+    selectedDateNoteInput.placeholder = `${targetDate} 메모 입력`;
+    selectedDateNoteInput.setAttribute('aria-label', `${targetDate} 메모 입력`);
+  }
+  if (selectedDateNoteStartDate && !selectedDateNoteStartDate.value) {
+    selectedDateNoteStartDate.value = targetDate;
+  }
+  const noteStart = parseIsoDate(selectedDateNoteStartDate?.value || targetDate) || targetDate;
+  if (selectedDateNoteStartDate) {
+    selectedDateNoteStartDate.value = noteStart;
+  }
+  if (selectedDateNoteEndDate) {
+    selectedDateNoteEndDate.min = noteStart;
+    if (!selectedDateNoteEndDate.value || selectedDateNoteEndDate.value < noteStart) {
+      selectedDateNoteEndDate.value = noteStart;
+    }
+  }
 
   if (createdTodos.length === 0) {
     addEmptyMessage(selectedCreatedList, '선택한 날짜에 생성된 할 일이 없습니다.');
@@ -2066,7 +2141,28 @@ function renderSelectedDatePanel() {
   } else {
     notes.forEach((item) => {
       const li = document.createElement('li');
-      li.textContent = `[${typeLabel[item.type] || item.type}] ${item.text}`;
+      const rangeText = formatCalendarRange(item.date, item.endDate || item.date);
+      li.className = 'selected-note-item';
+
+      const head = document.createElement('div');
+      head.className = 'selected-note-head';
+
+      const typeBadge = document.createElement('span');
+      typeBadge.className = 'selected-note-type';
+      typeBadge.textContent = typeLabel[item.type] || item.type;
+
+      const period = document.createElement('span');
+      period.className = 'selected-note-period';
+      const days = getRangeDaysInclusive(item.date, item.endDate || item.date);
+      period.textContent = days > 1 ? `${rangeText} · ${days}일` : rangeText;
+
+      const text = document.createElement('p');
+      text.className = 'selected-note-text';
+      text.textContent = item.text;
+      text.title = item.text;
+
+      head.append(typeBadge, period);
+      li.append(head, text);
       selectedCalendarNoteList.appendChild(li);
     });
   }
@@ -2106,6 +2202,43 @@ function applyCalendarFormMode() {
   if (calendarSubmitBtn) {
     calendarSubmitBtn.textContent = isTodo ? '할 일 저장' : '노트 저장';
   }
+}
+
+function addSelectedDateNote() {
+  const fallbackDate = state.selectedDate || toLocalIsoDate(new Date());
+  const startDate = parseIsoDate(selectedDateNoteStartDate?.value || fallbackDate) || fallbackDate;
+  const text = String(selectedDateNoteInput?.value || '').trim();
+  const endDate = clampCalendarRangeEnd(startDate, selectedDateNoteEndDate?.value || startDate);
+  if (!text) {
+    showToast('메모를 입력해 주세요.', 'error');
+    selectedDateNoteInput?.focus();
+    return;
+  }
+  if (!endDate || endDate < startDate) {
+    showToast('종료일을 시작일 이후로 선택해 주세요.', 'error');
+    selectedDateNoteEndDate?.focus();
+    return;
+  }
+
+  state.calendarItems.unshift(createCalendarItem(startDate, 'note', text, endDate));
+  state.selectedDate = startDate;
+  if (selectedDateNoteInput) {
+    selectedDateNoteInput.value = '';
+    selectedDateNoteInput.focus();
+  }
+  if (selectedDateNoteStartDate) {
+    selectedDateNoteStartDate.value = startDate;
+  }
+  if (selectedDateNoteEndDate) {
+    selectedDateNoteEndDate.min = startDate;
+    selectedDateNoteEndDate.value = endDate;
+  }
+  queueSync();
+  render();
+  showToast(
+    startDate === endDate ? '메모를 추가했습니다.' : `장기 일정을 추가했습니다. (${startDate} ~ ${endDate})`,
+    'success',
+  );
 }
 
 function renderCalendar() {
@@ -2213,19 +2346,25 @@ function renderCalendar() {
       entries.slice(0, 3).forEach((entry) => {
         const li = document.createElement('li');
         li.className = `calendar-item ${entry.type === 'note' ? 'is-note' : 'is-todo'}`;
+        if (entry.isRange) {
+          li.classList.add('is-range', `is-range-${entry.rangePosition}`);
+          if (entry.rangePosition !== 'start') {
+            li.classList.add('is-range-continuation');
+          }
+        }
 
         const badge = document.createElement('span');
         badge.className = 'type-badge';
-        badge.textContent = typeLabel[entry.type] || entry.type;
+        badge.textContent = entry.isRange ? '장기' : typeLabel[entry.type] || entry.type;
 
         const text = document.createElement('span');
         text.className = 'calendar-item-text';
-        text.textContent = entry.text;
+        text.textContent = entry.isRange && entry.rangePosition !== 'start' ? ' ' : entry.text;
 
         li.appendChild(badge);
         li.appendChild(text);
 
-        if (entry.source === 'calendar') {
+        if (entry.source === 'calendar' && (!entry.isRange || entry.rangePosition === 'start')) {
           const removeBtn = document.createElement('button');
           removeBtn.type = 'button';
           removeBtn.className = 'calendar-remove';
@@ -2257,17 +2396,18 @@ function renderCalendar() {
       state.selectedDate = dateText;
       state.currentMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
       render();
-      if (calendarForm) {
-        if (calendarDateInput) {
-          calendarDateInput.value = dateText;
-        }
-        setCalendarMode('note');
-        if (calendarTextInput && !calendarTextInput.classList.contains('hidden')) {
-          calendarTextInput.focus();
-        } else if (calendarTodoTitleInput) {
-          calendarTodoTitleInput.focus();
-        }
-        calendarForm.hidden = false;
+      if (calendarDateInput) {
+        calendarDateInput.value = dateText;
+      }
+      if (selectedDateNoteStartDate) {
+        selectedDateNoteStartDate.value = dateText;
+      }
+      if (selectedDateNoteEndDate) {
+        selectedDateNoteEndDate.min = dateText;
+        selectedDateNoteEndDate.value = dateText;
+      }
+      if (selectedDateNoteInput) {
+        selectedDateNoteInput.focus();
       }
     };
     cell.addEventListener('click', selectDate);
@@ -2586,6 +2726,96 @@ function registerEvents() {
     });
   }
 
+  if (selectedDateNoteInput && addSelectedDateNoteBtn) {
+    addSelectedDateNoteBtn.addEventListener('click', addSelectedDateNote);
+    selectedDateNoteInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addSelectedDateNote();
+      }
+    });
+    selectedDateNoteStartDate?.addEventListener('change', () => {
+      const startDate = parseIsoDate(selectedDateNoteStartDate.value || state.selectedDate || toLocalIsoDate(new Date()));
+      if (!startDate) {
+        return;
+      }
+      selectedDateNoteStartDate.value = startDate;
+      if (selectedDateNoteEndDate) {
+        selectedDateNoteEndDate.min = startDate;
+        if (!selectedDateNoteEndDate.value || selectedDateNoteEndDate.value < startDate) {
+          selectedDateNoteEndDate.value = startDate;
+        }
+      }
+    });
+    selectedDateNoteEndDate?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        addSelectedDateNote();
+      }
+    });
+  }
+
+  if (
+    toggleProfileEditorBtn &&
+    profileEditorEl &&
+    profileNicknameInput &&
+    profileHonorificInput &&
+    saveProfileBtn &&
+    cancelProfileBtn
+  ) {
+    const hideProfileEditor = () => {
+      profileEditorEl.classList.add('hidden');
+      toggleProfileEditorBtn.classList.remove('is-active');
+      toggleProfileEditorBtn.setAttribute('aria-expanded', 'false');
+    };
+
+    const showProfileEditor = () => {
+      const profile = normalizeUserProfile(state.userProfile);
+      profileNicknameInput.value = profile.nickname;
+      profileHonorificInput.value = profile.honorific;
+      profileEditorEl.classList.remove('hidden');
+      toggleProfileEditorBtn.classList.add('is-active');
+      toggleProfileEditorBtn.setAttribute('aria-expanded', 'true');
+      profileNicknameInput.focus();
+      profileNicknameInput.select();
+    };
+
+    toggleProfileEditorBtn.addEventListener('click', () => {
+      if (profileEditorEl.classList.contains('hidden')) {
+        showProfileEditor();
+      } else {
+        hideProfileEditor();
+      }
+    });
+
+    saveProfileBtn.addEventListener('click', () => {
+      state.userProfile = normalizeUserProfile({
+        nickname: profileNicknameInput.value,
+        honorific: profileHonorificInput.value,
+      });
+      saveLocalState();
+      updateAuthUI();
+      hideProfileEditor();
+      showToast('호칭을 저장했습니다.', 'success');
+    });
+
+    cancelProfileBtn.addEventListener('click', () => {
+      hideProfileEditor();
+    });
+
+    [profileNicknameInput, profileHonorificInput].forEach((input) => {
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          saveProfileBtn.click();
+        }
+        if (event.key === 'Escape') {
+          hideProfileEditor();
+        }
+      });
+    });
+  }
+
   if (nextMonthBtn) {
     nextMonthBtn.setAttribute('aria-pressed', 'false');
     nextMonthBtn.addEventListener('click', () => {
@@ -2706,6 +2936,7 @@ bootstrap().catch(() => {
 });
 
 registerServiceWorker();
+
 
 
 
