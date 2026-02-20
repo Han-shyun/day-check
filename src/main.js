@@ -30,6 +30,8 @@ const LEGACY_TODO_KEYS = ['day-check.main.todos.v3', 'day-check.main.todos.v2'];
 
 const API_BASE = '/api';
 const SYNC_DEBOUNCE_MS = 500;
+const STATE_POLL_INTERVAL_MS = 4000;
+const COLLAB_POLL_INTERVAL_MS = 6000;
 
 const defaultCategories = [{ id: 'uncategorized', name: '미분류' }];
 const BUCKET_TOTAL = 8;
@@ -70,6 +72,10 @@ let authUser = null;
 let pendingSync = false;
 let syncing = false;
 let syncTimer = null;
+let localDirty = false;
+let statePollTimer = null;
+let statePollInFlight = false;
+let statePollingEventsRegistered = false;
 let eventsRegistered = false;
 let columnResizeObserver = null;
 let toastHostEl = null;
@@ -80,6 +86,17 @@ let routeTransitionTimer = null;
 let routeModules = {};
 let authView = null;
 let viewportClassRegistered = false;
+let collabProfile = {
+  publicId: '',
+  publicIdUpdatedAt: null,
+};
+let collabSummary = null;
+let collabShareSettingsByBucket = {};
+let sharedTodosByContext = {};
+let sharedCommentsByTodo = {};
+let activeSharedContextByBucket = {};
+let collabPollTimer = null;
+let collabPollInFlight = false;
 
 const routeOutletEl = document.getElementById('routeOutlet');
 const routeLinkEls = Array.from(document.querySelectorAll('[data-route-link]'));
@@ -104,7 +121,6 @@ const weeklyPendingCountEl = document.getElementById('weeklyPendingCount');
 const weeklyPendingListEl = document.getElementById('weeklyPendingList');
 const quickForm = document.getElementById('quickAddForm');
 const quickAddBody = document.getElementById('quickAddBody');
-const toggleQuickAddBtn = document.getElementById('toggleQuickAddBtn');
 const quickInput = document.getElementById('quickInput');
 const dueDateInput = document.getElementById('dueDateInput');
 const bucketSelect = document.getElementById('bucketSelect');
@@ -137,8 +153,19 @@ const toggleProfileEditorBtn = document.getElementById('toggleProfileEditorBtn')
 const profileEditorEl = document.getElementById('profileEditor');
 const profileNicknameInput = document.getElementById('profileNicknameInput');
 const profileHonorificInput = document.getElementById('profileHonorificInput');
+const profilePublicIdInput = document.getElementById('profilePublicIdInput');
+const profilePublicIdHint = document.getElementById('profilePublicIdHint');
 const saveProfileBtn = document.getElementById('saveProfileBtn');
 const cancelProfileBtn = document.getElementById('cancelProfileBtn');
+
+const collabPanelEl = document.getElementById('collabPanel');
+const collabProfileBadgeEl = document.getElementById('collabProfileBadge');
+const collabInviteFormEl = document.getElementById('collabInviteForm');
+const collabInviteBucketSelectEl = document.getElementById('collabInviteBucketSelect');
+const collabInviteTargetInputEl = document.getElementById('collabInviteTargetInput');
+const collabReceivedInvitesEl = document.getElementById('collabReceivedInvites');
+const collabSentInvitesEl = document.getElementById('collabSentInvites');
+const collabMembershipListEl = document.getElementById('collabMembershipList');
 
 const priorityLabel = {
   3: '낮음',
@@ -367,6 +394,8 @@ function normalizeTodos(todos) {
       id: todo.id || crypto.randomUUID(),
       title: String(todo.title || '').trim(),
       details: normalizeTodoDetails(todo.details || todo.description || ''),
+      subtasks: normalizeTodoSubtasks(todo.subtasks || todo.subTasks || []),
+      memos: normalizeTodoMemos(todo.memos || todo.notes || []),
       categoryId: todo.categoryId || todo.bucketId || todo.bucket || 'uncategorized',
       projectLaneId: typeof todo.projectLaneId === 'string' ? todo.projectLaneId : '',
       bucket: normalizeBucketIdOrDefault(todo.bucket, 'bucket4'),
@@ -478,6 +507,8 @@ function normalizeDoneLog(doneLog) {
       id: item.id,
       title: String(item.title || '').trim(),
       details: normalizeTodoDetails(item.details || item.description || ''),
+      subtasks: normalizeTodoSubtasks(item.subtasks || item.subTasks || []),
+      memos: normalizeTodoMemos(item.memos || item.notes || []),
       categoryId: item.categoryId || 'uncategorized',
       projectLaneId: typeof item.projectLaneId === 'string' ? item.projectLaneId : '',
       bucket: normalizeBucketIdOrDefault(item.bucket, 'bucket4'),
@@ -553,6 +584,32 @@ function normalizeStateFromServer(payload) {
     selectedDate: state.selectedDate || toLocalIsoDate(new Date()),
     version: Number(payload?.version || 0),
   };
+}
+
+function applyServerStateSnapshot(payload, version, options = {}) {
+  const { shouldRender = true, shouldPersist = true } = options;
+  const merged = normalizeStateFromServer({ ...(payload || {}), version });
+
+  state.todos = merged.todos;
+  state.doneLog = merged.doneLog;
+  state.calendarItems = merged.calendarItems;
+  state.bucketLabels = normalizeBucketLabels(merged.bucketLabels);
+  state.bucketOrder = normalizeBucketOrder(merged.bucketOrder);
+  state.bucketVisibility = normalizeBucketVisibility(merged.bucketVisibility);
+  state.projectLanes = normalizeProjectLanes(merged.projectLanes);
+  state.categories = normalizeCategoryState(merged.categories);
+  state.userProfile = normalizeUserProfile(merged.userProfile || state.userProfile);
+  state.version = Number(version || merged.version || state.version || 0);
+
+  ensureCategoryIntegrity();
+  localDirty = false;
+
+  if (shouldPersist) {
+    saveLocalState();
+  }
+  if (shouldRender) {
+    render();
+  }
 }
 
 function hasStoredData(payload) {
@@ -1484,25 +1541,238 @@ function renderProjectLaneGroups(listEl, todos, bucket) {
   }
 }
 
+function buildTodoMetaText(todo) {
+  const dateText = todo.dueDate ? ` / 마감일 ${todo.dueDate}` : '';
+  const projectText = ` / 프로젝트 ${getProjectLaneName(todo.projectLaneId) || '미지정'}`;
+  const subtasks = Array.isArray(todo.subtasks) ? todo.subtasks : [];
+  if (subtasks.length === 0) {
+    return `우선순위: ${priorityLabel[todo.priority] || '없음'}${dateText}${projectText}`;
+  }
+  const doneCount = subtasks.filter((entry) => entry.done).length;
+  return `우선순위: ${priorityLabel[todo.priority] || '없음'}${dateText}${projectText} / 세부 ${doneCount}/${subtasks.length}`;
+}
+
+function renderTodoSubtaskList(listEl, todo, onUpdate) {
+  if (!listEl || !todo) {
+    return;
+  }
+
+  const subtasks = normalizeTodoSubtasks(todo.subtasks || []);
+  todo.subtasks = subtasks;
+  listEl.innerHTML = '';
+
+  if (subtasks.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'todo-inline-empty';
+    empty.textContent = '세부 할 일을 추가해 보세요.';
+    listEl.appendChild(empty);
+    return;
+  }
+
+  subtasks.forEach((subtask) => {
+    const li = document.createElement('li');
+    li.className = 'todo-subtask-item';
+
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'todo-subtask-toggle';
+    toggleBtn.textContent = subtask.done ? '완료' : '진행';
+    toggleBtn.setAttribute('aria-pressed', String(Boolean(subtask.done)));
+    toggleBtn.setAttribute(
+      'aria-label',
+      subtask.done ? '세부 할 일을 미완료로 변경' : '세부 할 일을 완료로 변경',
+    );
+    toggleBtn.addEventListener('click', () => {
+      subtask.done = !subtask.done;
+      renderTodoSubtaskList(listEl, todo, onUpdate);
+      if (onUpdate) {
+        onUpdate();
+      }
+      queueSync();
+    });
+
+    const text = document.createElement('span');
+    text.className = 'todo-subtask-text';
+    if (subtask.done) {
+      text.classList.add('is-done');
+    }
+    text.textContent = subtask.text;
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'todo-mini-delete';
+    removeBtn.textContent = '삭제';
+    removeBtn.setAttribute('aria-label', '세부 할 일 삭제');
+    removeBtn.addEventListener('click', () => {
+      todo.subtasks = subtasks.filter((entry) => entry.id !== subtask.id);
+      renderTodoSubtaskList(listEl, todo, onUpdate);
+      if (onUpdate) {
+        onUpdate();
+      }
+      queueSync();
+    });
+
+    li.append(toggleBtn, text, removeBtn);
+    listEl.appendChild(li);
+  });
+}
+
+function bindTodoSubtaskComposer(inputEl, addBtn, listEl, todo, onUpdate) {
+  if (!inputEl || !addBtn || !listEl || !todo) {
+    return;
+  }
+
+  const submit = () => {
+    const text = normalizeTodoSubtaskText(inputEl.value);
+    if (!text) {
+      return;
+    }
+
+    todo.subtasks = normalizeTodoSubtasks([
+      {
+        id: crypto.randomUUID(),
+        text,
+        done: false,
+        createdAt: new Date().toISOString(),
+      },
+      ...(todo.subtasks || []),
+    ]);
+    inputEl.value = '';
+    renderTodoSubtaskList(listEl, todo, onUpdate);
+    if (onUpdate) {
+      onUpdate();
+    }
+    queueSync();
+    inputEl.focus();
+  };
+
+  addBtn.addEventListener('click', submit);
+  inputEl.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      submit();
+    }
+  });
+}
+
+function renderTodoMemoList(listEl, todo) {
+  if (!listEl || !todo) {
+    return;
+  }
+
+  const memos = normalizeTodoMemos(todo.memos || []);
+  todo.memos = memos;
+  listEl.innerHTML = '';
+
+  if (memos.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'todo-inline-empty';
+    empty.textContent = '메모를 추가해 보세요.';
+    listEl.appendChild(empty);
+    return;
+  }
+
+  memos.forEach((memo) => {
+    const li = document.createElement('li');
+    li.className = 'todo-memo-item';
+
+    const body = document.createElement('div');
+    body.className = 'todo-memo-body';
+    body.appendChild(createSelectedNoteTextNode(memo.text));
+
+    const createdAtText = memo.createdAt ? formatDisplayDateTime(memo.createdAt) : '';
+    if (createdAtText) {
+      const date = document.createElement('span');
+      date.className = 'todo-memo-date';
+      date.textContent = createdAtText;
+      body.appendChild(date);
+    }
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'todo-mini-delete';
+    removeBtn.textContent = '삭제';
+    removeBtn.setAttribute('aria-label', '메모 삭제');
+    removeBtn.addEventListener('click', () => {
+      todo.memos = memos.filter((entry) => entry.id !== memo.id);
+      renderTodoMemoList(listEl, todo);
+      queueSync();
+    });
+
+    li.append(body, removeBtn);
+    listEl.appendChild(li);
+  });
+}
+
+function bindTodoMemoComposer(inputEl, addBtn, listEl, todo) {
+  if (!inputEl || !addBtn || !listEl || !todo) {
+    return;
+  }
+
+  const submit = () => {
+    const text = normalizeTodoMemoText(inputEl.value);
+    if (!text) {
+      return;
+    }
+
+    todo.memos = normalizeTodoMemos([
+      {
+        id: crypto.randomUUID(),
+        text,
+        createdAt: new Date().toISOString(),
+      },
+      ...(todo.memos || []),
+    ]);
+    inputEl.value = '';
+    renderTodoMemoList(listEl, todo);
+    queueSync();
+    inputEl.focus();
+  };
+
+  addBtn.addEventListener('click', submit);
+  inputEl.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      submit();
+    }
+  });
+}
+
 function renderTodoItems(listEl, todos) {
   todos.forEach((todo) => {
     const item = todoTemplate.content.firstElementChild.cloneNode(true);
     const titleEl = item.querySelector('.title');
     const metaEl = item.querySelector('.meta');
     const detailsEl = item.querySelector('.todo-detail-input');
+    const subtaskInputEl = item.querySelector('.todo-subtask-input');
+    const subtaskAddBtn = item.querySelector('.todo-subtask-add');
+    const subtaskListEl = item.querySelector('.todo-subtask-list');
+    const memoInputEl = item.querySelector('.todo-memo-input');
+    const memoAddBtn = item.querySelector('.todo-memo-add');
+    const memoListEl = item.querySelector('.todo-memo-list');
     const completeBtn = item.querySelector('.complete');
     const deleteBtn = item.querySelector('.delete');
     const projectSelect = item.querySelector('.todo-category-select');
 
+    todo.subtasks = normalizeTodoSubtasks(todo.subtasks || []);
+    todo.memos = normalizeTodoMemos(todo.memos || []);
+
     titleEl.textContent = todo.title;
-    const dateText = todo.dueDate ? ` / 마감일 ${todo.dueDate}` : '';
-    const projectText = ` / 프로젝트 ${getProjectLaneName(todo.projectLaneId) || '미지정'}`;
-    metaEl.textContent = `우선순위: ${priorityLabel[todo.priority] || '없음'}${dateText}${projectText}`;
+    const updateMeta = () => {
+      metaEl.textContent = buildTodoMetaText(todo);
+    };
+    updateMeta();
+
     bindTodoDetailsInput(detailsEl, todo);
+    renderTodoSubtaskList(subtaskListEl, todo, updateMeta);
+    bindTodoSubtaskComposer(subtaskInputEl, subtaskAddBtn, subtaskListEl, todo, updateMeta);
+    renderTodoMemoList(memoListEl, todo);
+    bindTodoMemoComposer(memoInputEl, memoAddBtn, memoListEl, todo);
 
     renderProjectLaneOptions(projectSelect, todo);
     projectSelect.addEventListener('change', () => {
       todo.projectLaneId = projectSelect.value;
+      updateMeta();
       render();
       queueSync();
     });
@@ -1512,6 +1782,8 @@ function renderTodoItems(listEl, todos) {
         id: todo.id,
         title: todo.title,
         details: todo.details || '',
+        subtasks: normalizeTodoSubtasks(todo.subtasks || []),
+        memos: normalizeTodoMemos(todo.memos || []),
         categoryId: todo.categoryId,
         projectLaneId: todo.projectLaneId || '',
         bucket: todo.bucket,
@@ -1575,6 +1847,95 @@ function sortTodos(list) {
   });
 }
 
+function normalizeTodoSubtaskText(raw) {
+  return String(raw || '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+}
+
+function normalizeTodoMemoText(raw) {
+  return String(raw || '')
+    .replace(/\r\n/g, '\n')
+    .trim()
+    .slice(0, 1200);
+}
+
+function normalizeTodoSubtasks(subtasks) {
+  const source = Array.isArray(subtasks) ? subtasks : [];
+  return source
+    .map((item) => {
+      if (typeof item === 'string') {
+        const text = normalizeTodoSubtaskText(item);
+        if (!text) {
+          return null;
+        }
+        return {
+          id: crypto.randomUUID(),
+          text,
+          done: false,
+          createdAt: new Date().toISOString(),
+        };
+      }
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const text = normalizeTodoSubtaskText(item.text || item.title || '');
+      if (!text) {
+        return null;
+      }
+
+      return {
+        id:
+          typeof item.id === 'string' && item.id.trim()
+            ? item.id.trim()
+            : crypto.randomUUID(),
+        text,
+        done: Boolean(item.done || item.completed),
+        createdAt: item.createdAt || new Date().toISOString(),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeTodoMemos(memos) {
+  const source = Array.isArray(memos) ? memos : [];
+  return source
+    .map((item) => {
+      if (typeof item === 'string') {
+        const text = normalizeTodoMemoText(item);
+        if (!text) {
+          return null;
+        }
+        return {
+          id: crypto.randomUUID(),
+          text,
+          createdAt: new Date().toISOString(),
+        };
+      }
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const text = normalizeTodoMemoText(item.text || item.content || item.memo || '');
+      if (!text) {
+        return null;
+      }
+
+      return {
+        id:
+          typeof item.id === 'string' && item.id.trim()
+            ? item.id.trim()
+            : crypto.randomUUID(),
+        text,
+        createdAt: item.createdAt || new Date().toISOString(),
+      };
+    })
+    .filter(Boolean);
+}
+
 function normalizeTodoDetails(raw) {
   return String(raw || '')
     .replace(/\r\n/g, '\n')
@@ -1584,6 +1945,8 @@ function normalizeTodoDetails(raw) {
 function createTodo({
   title,
   details = '',
+  subtasks = [],
+  memos = [],
   categoryId = 'uncategorized',
   projectLaneId = '',
   bucket = 'bucket4',
@@ -1594,6 +1957,8 @@ function createTodo({
     id: crypto.randomUUID(),
     title,
     details: normalizeTodoDetails(details),
+    subtasks: normalizeTodoSubtasks(subtasks),
+    memos: normalizeTodoMemos(memos),
     categoryId,
     projectLaneId,
     bucket,
@@ -1682,6 +2047,10 @@ function markStateDirty() {
   }, SYNC_DEBOUNCE_MS);
 }
 
+function hasPendingLocalChanges() {
+  return localDirty || syncing || pendingSync || Boolean(syncTimer);
+}
+
 async function apiRequest(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
@@ -1701,6 +2070,444 @@ function getCookie(name) {
     return parts.pop().split(';').shift() || '';
   }
   return '';
+}
+
+function normalizePublicIdInput(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+
+function isValidPublicId(value) {
+  return /^[a-z0-9_]{4,20}$/.test(String(value || ''));
+}
+
+function collabContextKey(ownerUserId, bucketKey) {
+  return `${Number(ownerUserId)}:${String(bucketKey)}`;
+}
+
+function parseCollabContextKey(key) {
+  const [ownerUserIdText, bucketKey] = String(key || '').split(':');
+  const ownerUserId = Number(ownerUserIdText);
+  if (!Number.isInteger(ownerUserId) || ownerUserId <= 0 || !bucketKey) {
+    return null;
+  }
+  return {
+    ownerUserId,
+    bucketKey,
+    key: collabContextKey(ownerUserId, bucketKey),
+  };
+}
+
+function safeReadJson(response) {
+  return response
+    .json()
+    .catch(() => ({}));
+}
+
+function resetCollabState() {
+  collabProfile = {
+    publicId: '',
+    publicIdUpdatedAt: null,
+  };
+  collabSummary = null;
+  collabShareSettingsByBucket = {};
+  sharedTodosByContext = {};
+  sharedCommentsByTodo = {};
+  activeSharedContextByBucket = {};
+  stopCollabPolling();
+}
+
+function normalizeCollabShareSettings(summaryPayload) {
+  const normalized = buckets.reduce((acc, bucket) => {
+    acc[bucket] = false;
+    return acc;
+  }, {});
+
+  const settings = Array.isArray(summaryPayload?.shareSettings) ? summaryPayload.shareSettings : [];
+  settings.forEach((entry) => {
+    const bucketKey = normalizeBucketIdOrDefault(entry?.bucketKey, '');
+    if (!bucketKey) {
+      return;
+    }
+    normalized[bucketKey] = Boolean(entry.enabled);
+  });
+
+  const owned = Array.isArray(summaryPayload?.ownedBuckets) ? summaryPayload.ownedBuckets : [];
+  owned.forEach((entry) => {
+    const bucketKey = normalizeBucketIdOrDefault(entry?.bucketKey, '');
+    if (!bucketKey) {
+      return;
+    }
+    if (entry.shareEnabled === true) {
+      normalized[bucketKey] = true;
+    }
+  });
+
+  return normalized;
+}
+
+function isBucketShareEnabled(bucket) {
+  return Boolean(collabShareSettingsByBucket[bucket]);
+}
+
+function shouldShowSharedSection(bucket) {
+  if (!isServerSync || !authUser || !collabSummary) {
+    return false;
+  }
+  if (isBucketShareEnabled(bucket)) {
+    return true;
+  }
+  return getCollabContextsForBucket(bucket).length > 0;
+}
+
+function pruneCollabCaches() {
+  const validContextKeys = new Set();
+  buckets.forEach((bucket) => {
+    getCollabContextsForBucket(bucket).forEach((context) => {
+      validContextKeys.add(context.key);
+    });
+  });
+
+  Object.keys(sharedTodosByContext).forEach((key) => {
+    if (!validContextKeys.has(key)) {
+      delete sharedTodosByContext[key];
+    }
+  });
+
+  Object.keys(activeSharedContextByBucket).forEach((bucket) => {
+    const key = activeSharedContextByBucket[bucket];
+    if (!validContextKeys.has(key)) {
+      delete activeSharedContextByBucket[bucket];
+    }
+  });
+
+  const validTodoIds = new Set();
+  Object.values(sharedTodosByContext).forEach((todos) => {
+    const list = Array.isArray(todos) ? todos : [];
+    list.forEach((todo) => {
+      if (todo?.id) {
+        validTodoIds.add(String(todo.id));
+      }
+    });
+  });
+  Object.keys(sharedCommentsByTodo).forEach((todoId) => {
+    if (!validTodoIds.has(todoId)) {
+      delete sharedCommentsByTodo[todoId];
+    }
+  });
+}
+
+function ensureBucketShareToggle(bucket) {
+  if (!boardEl) {
+    return null;
+  }
+  const column = boardEl.querySelector(`.column[data-bucket="${bucket}"]`);
+  const actions = column?.querySelector('.column-head-actions');
+  if (!actions) {
+    return null;
+  }
+
+  let button = actions.querySelector('.bucket-share-toggle');
+  if (!button) {
+    button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ghost-btn bucket-share-toggle';
+    button.dataset.sharedAction = 'toggle-share-setting';
+    button.dataset.bucket = bucket;
+    actions.appendChild(button);
+  }
+
+  const enabled = isBucketShareEnabled(bucket);
+  const ready = isServerSync && !!authUser && !!collabSummary;
+  button.disabled = !ready;
+  button.textContent = enabled ? '공유 ON' : '공유 시작';
+  button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+  return button;
+}
+
+function getCollabContextsForBucket(bucket) {
+  const contexts = [];
+  const seen = new Set();
+  if (!collabSummary) {
+    return contexts;
+  }
+
+  const owned = Array.isArray(collabSummary.ownedBuckets) ? collabSummary.ownedBuckets : [];
+  owned.forEach((entry) => {
+    if (!entry || entry.bucketKey !== bucket) {
+      return;
+    }
+    const hasMembers = Array.isArray(entry.members) && entry.members.length > 0;
+    const hasPendingInvites = Array.isArray(entry.pendingInvites) && entry.pendingInvites.length > 0;
+    const shareEnabled = entry.shareEnabled === true || isBucketShareEnabled(bucket) || hasMembers || hasPendingInvites;
+    if (!shareEnabled) {
+      return;
+    }
+    const key = collabContextKey(entry.ownerUserId, entry.bucketKey);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    contexts.push({
+      key,
+      ownerUserId: Number(entry.ownerUserId),
+      bucketKey: entry.bucketKey,
+      source: 'owned',
+      label: `내 공유 (${getBucketLabel(entry.bucketKey)})`,
+    });
+  });
+
+  const joined = Array.isArray(collabSummary.joinedBuckets) ? collabSummary.joinedBuckets : [];
+  joined.forEach((entry) => {
+    if (!entry || entry.bucketKey !== bucket) {
+      return;
+    }
+    const key = collabContextKey(entry.ownerUserId, entry.bucketKey);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    const ownerPublicId = entry.owner?.publicId ? `@${entry.owner.publicId}` : `USER-${entry.ownerUserId}`;
+    contexts.push({
+      key,
+      ownerUserId: Number(entry.ownerUserId),
+      bucketKey: entry.bucketKey,
+      source: 'joined',
+      label: `${ownerPublicId} 공유`,
+    });
+  });
+
+  if (isServerSync && authUser && isBucketShareEnabled(bucket)) {
+    const ownerKey = collabContextKey(Number(authUser.id), bucket);
+    if (!seen.has(ownerKey)) {
+      contexts.unshift({
+        key: ownerKey,
+        ownerUserId: Number(authUser.id),
+        bucketKey: bucket,
+        source: 'owned',
+        label: `내 공유 (${getBucketLabel(bucket)})`,
+      });
+    }
+  }
+
+  return contexts;
+}
+
+function ensureActiveSharedContext(bucket) {
+  const contexts = getCollabContextsForBucket(bucket);
+  if (contexts.length === 0) {
+    delete activeSharedContextByBucket[bucket];
+    return null;
+  }
+
+  const activeKey = activeSharedContextByBucket[bucket];
+  const active = contexts.find((entry) => entry.key === activeKey) || contexts[0];
+  activeSharedContextByBucket[bucket] = active.key;
+  return active;
+}
+
+function getSharedTodoById(todoId) {
+  const targetId = String(todoId || '');
+  if (!targetId) {
+    return null;
+  }
+
+  for (const [contextKey, todos] of Object.entries(sharedTodosByContext)) {
+    const list = Array.isArray(todos) ? todos : [];
+    const todo = list.find((item) => item && item.id === targetId);
+    if (todo) {
+      return {
+        contextKey,
+        todo,
+      };
+    }
+  }
+  return null;
+}
+
+async function collabApiRequest(path, options = {}, { withCsrf = false } = {}) {
+  const headers = {
+    ...(options.headers || {}),
+  };
+  if (withCsrf) {
+    headers['x-csrf-token'] = getCookie('daycheck_csrf') || '';
+  }
+
+  const response = await apiRequest(path, {
+    ...options,
+    headers,
+  });
+
+  if (response.status === 401) {
+    applyAuthState(null);
+    updateAuthUI();
+    render();
+  }
+
+  return response;
+}
+
+async function refreshSharedTodosByContext(context) {
+  if (!context || !isServerSync || !authUser) {
+    return;
+  }
+
+  const response = await collabApiRequest(
+    `/collab/shares/${encodeURIComponent(context.ownerUserId)}/${encodeURIComponent(context.bucketKey)}/todos`,
+    { method: 'GET' },
+  );
+  if (response.status === 403 || response.status === 404) {
+    delete sharedTodosByContext[context.key];
+    return;
+  }
+  if (!response.ok) {
+    return;
+  }
+
+  const payload = await safeReadJson(response);
+  const todos = Array.isArray(payload?.todos) ? payload.todos : [];
+  sharedTodosByContext[context.key] = todos;
+}
+
+async function refreshAllSharedTodos() {
+  const contexts = [];
+  buckets.forEach((bucket) => {
+    const active = ensureActiveSharedContext(bucket);
+    if (active) {
+      contexts.push(active);
+    }
+  });
+  await Promise.all(contexts.map((context) => refreshSharedTodosByContext(context)));
+}
+
+async function refreshCollabSummary({ includeTodos = true } = {}) {
+  if (!isServerSync || !authUser) {
+    resetCollabState();
+    return null;
+  }
+
+  const response = await collabApiRequest('/collab/summary', { method: 'GET' });
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = await safeReadJson(response);
+  collabSummary = payload || null;
+  collabShareSettingsByBucket = normalizeCollabShareSettings(payload);
+  const profile = payload?.profile || {};
+  collabProfile = {
+    publicId: normalizePublicIdInput(profile.publicId || authUser?.publicId || ''),
+    publicIdUpdatedAt: profile.publicIdUpdatedAt || null,
+  };
+  pruneCollabCaches();
+
+  if (includeTodos) {
+    await refreshAllSharedTodos();
+  }
+  return collabSummary;
+}
+
+async function refreshSharedComments(todoId) {
+  const targetId = String(todoId || '');
+  if (!targetId || !isServerSync || !authUser) {
+    return [];
+  }
+
+  const response = await collabApiRequest(
+    `/collab/shared-todos/${encodeURIComponent(targetId)}/comments`,
+    { method: 'GET' },
+  );
+  if (!response.ok) {
+    return [];
+  }
+  const payload = await safeReadJson(response);
+  const comments = Array.isArray(payload?.comments) ? payload.comments : [];
+  sharedCommentsByTodo[targetId] = comments;
+  return comments;
+}
+
+function stopCollabPolling() {
+  if (collabPollTimer) {
+    clearInterval(collabPollTimer);
+    collabPollTimer = null;
+  }
+  collabPollInFlight = false;
+}
+
+async function pollCollabData(force = false) {
+  if (!isServerSync || !authUser || currentRoute !== 'buckets' || collabPollInFlight) {
+    return;
+  }
+  if (!force && typeof document !== 'undefined' && document.hidden) {
+    return;
+  }
+
+  collabPollInFlight = true;
+  try {
+    await refreshCollabSummary({ includeTodos: true });
+    render();
+  } catch {
+    // Keep local snapshot and retry on next poll.
+  } finally {
+    collabPollInFlight = false;
+  }
+}
+
+function startCollabPolling() {
+  if (!isServerSync || !authUser || currentRoute !== 'buckets') {
+    stopCollabPolling();
+    return;
+  }
+  if (!collabPollTimer) {
+    collabPollTimer = setInterval(() => {
+      pollCollabData().catch(() => {});
+    }, COLLAB_POLL_INTERVAL_MS);
+  }
+  pollCollabData(true).catch(() => {});
+}
+
+function syncCollabPolling() {
+  if (!isServerSync || !authUser || currentRoute !== 'buckets') {
+    stopCollabPolling();
+    return;
+  }
+  startCollabPolling();
+}
+
+async function savePublicIdToServer(inputPublicId) {
+  const publicId = normalizePublicIdInput(inputPublicId);
+  if (!isValidPublicId(publicId)) {
+    showToast('고유ID는 4~20자, 소문자/숫자/_만 가능합니다.', 'error');
+    return false;
+  }
+
+  const response = await collabApiRequest(
+    '/collab/public-id',
+    {
+      method: 'PUT',
+      body: JSON.stringify({ publicId }),
+    },
+    { withCsrf: true },
+  );
+
+  if (response.status === 409) {
+    showToast('이미 사용 중인 고유ID입니다.', 'error');
+    return false;
+  }
+  if (!response.ok) {
+    showToast('고유ID 저장에 실패했습니다.', 'error');
+    return false;
+  }
+
+  const payload = await safeReadJson(response);
+  const profile = payload?.profile || {};
+  collabProfile.publicId = normalizePublicIdInput(profile.publicId || publicId);
+  collabProfile.publicIdUpdatedAt = profile.publicIdUpdatedAt || collabProfile.publicIdUpdatedAt;
+  if (authUser) {
+    authUser.publicId = collabProfile.publicId;
+  }
+  return true;
 }
 
 function getProfileDisplayName() {
@@ -1728,11 +2535,21 @@ function applyAuthState(me) {
     isServerSync = false;
     authUser = null;
     state.version = 0;
+    localDirty = false;
+    stopStatePolling();
+    resetCollabState();
     return;
   }
 
   isServerSync = true;
   authUser = me.user;
+  collabProfile = {
+    publicId: normalizePublicIdInput(me.user?.publicId || ''),
+    publicIdUpdatedAt: null,
+  };
+  collabShareSettingsByBucket = {};
+  startStatePolling();
+  syncCollabPolling();
 }
 
 function updateAuthUI() {
@@ -1745,9 +2562,23 @@ function updateAuthUI() {
     const label = authUser.nickname || authUser.email || `kakao-${authUser.kakaoId || ''}`;
     authStatusEl.textContent = `로그인 상태: ${label}`;
     authBtn.innerHTML = '<span>로그아웃</span>';
+    if (profilePublicIdInput) {
+      profilePublicIdInput.disabled = false;
+      profilePublicIdInput.value = normalizePublicIdInput(collabProfile.publicId || authUser.publicId || '');
+    }
+    if (profilePublicIdHint) {
+      profilePublicIdHint.textContent = '형식: a-z, 0-9, _ / 4~20자';
+    }
   } else {
     authStatusEl.textContent = '로그인 필요';
     authBtn.innerHTML = '<span class="kakao-logo" aria-hidden="true">K</span><span>카카오 로그인</span>';
+    if (profilePublicIdInput) {
+      profilePublicIdInput.disabled = true;
+      profilePublicIdInput.value = '';
+    }
+    if (profilePublicIdHint) {
+      profilePublicIdHint.textContent = '로그인 후 설정할 수 있습니다.';
+    }
   }
 }
 
@@ -1784,6 +2615,91 @@ async function loadServerState() {
   }
 }
 
+async function pollServerState(force = false) {
+  if (!isServerSync || !authUser || statePollInFlight) {
+    return;
+  }
+  if (hasPendingLocalChanges()) {
+    return;
+  }
+  if (!force && typeof document !== 'undefined' && document.hidden) {
+    return;
+  }
+
+  statePollInFlight = true;
+  try {
+    const response = await apiRequest('/state', { method: 'GET' });
+    if (response.status === 401) {
+      applyAuthState(null);
+      updateAuthUI();
+      return;
+    }
+    if (!response.ok) {
+      return;
+    }
+
+    const data = await response.json();
+    const remoteVersion = Number(data.version || 0);
+    if (remoteVersion <= Number(state.version || 0)) {
+      return;
+    }
+    if (hasPendingLocalChanges()) {
+      return;
+    }
+
+    applyServerStateSnapshot(data.state || {}, remoteVersion);
+  } catch {
+    // Keep current state and try again on next polling tick.
+  } finally {
+    statePollInFlight = false;
+  }
+}
+
+function stopStatePolling() {
+  if (statePollTimer) {
+    clearInterval(statePollTimer);
+    statePollTimer = null;
+  }
+  statePollInFlight = false;
+}
+
+function startStatePolling() {
+  if (!isServerSync || !authUser) {
+    stopStatePolling();
+    return;
+  }
+  if (!statePollTimer) {
+    statePollTimer = setInterval(() => {
+      pollServerState().catch(() => {});
+    }, STATE_POLL_INTERVAL_MS);
+  }
+  pollServerState(true).catch(() => {});
+}
+
+function registerStatePollingEvents() {
+  if (statePollingEventsRegistered || typeof window === 'undefined') {
+    return;
+  }
+
+  statePollingEventsRegistered = true;
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        pollServerState(true).catch(() => {});
+        pollCollabData(true).catch(() => {});
+      }
+    });
+  }
+  window.addEventListener('focus', () => {
+    pollServerState(true).catch(() => {});
+    pollCollabData(true).catch(() => {});
+  });
+  window.addEventListener('online', () => {
+    pollServerState(true).catch(() => {});
+    pollCollabData(true).catch(() => {});
+  });
+}
+
 async function syncState() {
   if (!isServerSync || !authUser || syncing) {
     return;
@@ -1811,22 +2727,15 @@ async function syncState() {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        applyAuthState(null);
+        updateAuthUI();
+        return;
+      }
       if (response.status === 409) {
         const data = await response.json();
         if (data && data.state) {
-          const restored = normalizeStateFromServer(data.state);
-          state.todos = restored.todos;
-          state.doneLog = restored.doneLog;
-          state.calendarItems = restored.calendarItems;
-          state.categories = normalizeCategoryState(data.state?.categories || state.categories);
-          state.bucketLabels = normalizeBucketLabels(data.state?.bucketLabels || state.bucketLabels);
-          state.bucketOrder = normalizeBucketOrder(data.state?.bucketOrder || state.bucketOrder);
-          state.bucketVisibility = normalizeBucketVisibility(data.state?.bucketVisibility || state.bucketVisibility);
-          state.projectLanes = normalizeProjectLanes(data.state?.projectLanes || state.projectLanes);
-          state.userProfile = normalizeUserProfile(data.state?.userProfile || state.userProfile);
-          state.version = Number(data.version || state.version);
-          ensureCategoryIntegrity();
-          render();
+          applyServerStateSnapshot(data.state, Number(data.version || 0));
         }
       }
       return;
@@ -1834,6 +2743,7 @@ async function syncState() {
 
     const result = await response.json();
     state.version = Number(result.version || state.version);
+    localDirty = false;
   } catch {
     // Keep local data and retry on next edit.
   } finally {
@@ -1852,6 +2762,8 @@ function queueSync(immediate = false) {
   if (!isServerSync) {
     return;
   }
+
+  localDirty = true;
 
   if (syncing) {
     pendingSync = true;
@@ -1930,6 +2842,7 @@ function animateRouteView(route, direction = 'none') {
 
 function activateRoute(route, direction = 'none') {
   currentRoute = APP_ROUTES.includes(route) ? route : 'home';
+  syncCollabPolling();
 
   routeViewEls.forEach((viewEl) => {
     const isActive = viewEl.dataset.routeView === currentRoute;
@@ -1971,6 +2884,7 @@ function render() {
   applyBucketVisibility();
   applyBucketLabels();
   renderRoute(currentRoute);
+  renderCollabPanel();
 
   const activeModule = routeModules[currentRoute];
   if (activeModule?.render) {
@@ -2115,6 +3029,852 @@ function renderTodayNoteHighlights(listEl, notes) {
   });
 }
 
+function ensureSharedSection(bucket) {
+  if (!boardEl) {
+    return null;
+  }
+  const column = boardEl.querySelector(`.column[data-bucket="${bucket}"]`);
+  if (!column) {
+    return null;
+  }
+
+  let section = column.querySelector('.shared-todo-section');
+  if (section) {
+    section.dataset.bucket = bucket;
+    return section;
+  }
+
+  section = document.createElement('section');
+  section.className = 'shared-todo-section';
+  section.dataset.bucket = bucket;
+
+  const head = document.createElement('div');
+  head.className = 'shared-todo-head';
+
+  const title = document.createElement('strong');
+  title.textContent = '공유 작업';
+  head.appendChild(title);
+
+  const contextSelect = document.createElement('select');
+  contextSelect.className = 'shared-context-select';
+  contextSelect.setAttribute('aria-label', '공유 컨텍스트 선택');
+  head.appendChild(contextSelect);
+  section.appendChild(head);
+
+  const composeForm = document.createElement('form');
+  composeForm.className = 'shared-compose-form';
+  composeForm.dataset.bucket = bucket;
+
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.className = 'shared-compose-title';
+  titleInput.maxLength = 120;
+  titleInput.placeholder = '공유 작업 제목';
+  titleInput.required = true;
+  composeForm.appendChild(titleInput);
+
+  const detailInput = document.createElement('textarea');
+  detailInput.className = 'shared-compose-details';
+  detailInput.rows = 2;
+  detailInput.maxLength = 1200;
+  detailInput.placeholder = '상세 내용';
+  composeForm.appendChild(detailInput);
+
+  const metaRow = document.createElement('div');
+  metaRow.className = 'shared-compose-meta';
+
+  const priority = document.createElement('select');
+  priority.className = 'shared-compose-priority';
+  priority.innerHTML = `
+    <option value="1">높음</option>
+    <option value="2" selected>보통</option>
+    <option value="3">낮음</option>
+  `;
+  metaRow.appendChild(priority);
+
+  const dueDate = document.createElement('input');
+  dueDate.type = 'date';
+  dueDate.className = 'shared-compose-due';
+  dueDate.setAttribute('aria-label', '공유 작업 마감일');
+  metaRow.appendChild(dueDate);
+
+  const submitBtn = document.createElement('button');
+  submitBtn.type = 'submit';
+  submitBtn.textContent = '공유 추가';
+  metaRow.appendChild(submitBtn);
+
+  composeForm.appendChild(metaRow);
+  section.appendChild(composeForm);
+
+  const list = document.createElement('ul');
+  list.className = 'todo-list shared-todo-list';
+  section.appendChild(list);
+
+  column.appendChild(section);
+  return section;
+}
+
+function setSharedListEmpty(listEl, message) {
+  if (!listEl) {
+    return;
+  }
+  listEl.innerHTML = '';
+  const li = document.createElement('li');
+  li.className = 'todo-inline-empty';
+  li.textContent = message;
+  listEl.appendChild(li);
+}
+
+function getAuthorTag(author) {
+  const publicId = normalizePublicIdInput(author?.publicId || '');
+  if (publicId) {
+    return `@${publicId}`;
+  }
+  return `USER-${author?.userId || '?'}`;
+}
+
+function getSharedTodoMetaText(todo) {
+  const priority = priorityLabel[todo.priority] || '보통';
+  const dueDateText = todo.dueDate ? ` / 마감 ${todo.dueDate}` : '';
+  const doneText = todo.isDone ? ' / 완료' : '';
+  return `우선순위 ${priority}${dueDateText}${doneText} / rev ${todo.revision}`;
+}
+
+function createSharedCommentItem(comment, context) {
+  const li = document.createElement('li');
+  li.className = 'shared-comment-item';
+  li.dataset.commentId = comment.id;
+
+  const body = document.createElement('div');
+  body.className = 'shared-comment-body';
+
+  const head = document.createElement('div');
+  head.className = 'shared-comment-head';
+  const author = document.createElement('span');
+  author.className = 'shared-comment-author';
+  author.textContent = getAuthorTag(comment.author);
+  head.appendChild(author);
+
+  if (comment.createdAt) {
+    const created = document.createElement('span');
+    created.className = 'shared-comment-date';
+    created.textContent = formatDisplayDateTime(comment.createdAt);
+    head.appendChild(created);
+  }
+  body.appendChild(head);
+
+  const text = document.createElement('p');
+  text.className = 'shared-comment-text';
+  text.textContent = comment.body || '';
+  body.appendChild(text);
+  li.appendChild(body);
+
+  const canDelete =
+    Number(authUser?.id) === Number(comment.author?.userId) ||
+    Number(authUser?.id) === Number(context.ownerUserId);
+  if (canDelete) {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'todo-mini-delete';
+    deleteBtn.textContent = '삭제';
+    deleteBtn.dataset.sharedAction = 'delete-comment';
+    deleteBtn.dataset.commentId = comment.id;
+    li.appendChild(deleteBtn);
+  }
+
+  return li;
+}
+
+function renderSharedComments(listEl, todo, context) {
+  if (!listEl) {
+    return;
+  }
+  const comments = Array.isArray(sharedCommentsByTodo[todo.id]) ? sharedCommentsByTodo[todo.id] : [];
+  listEl.innerHTML = '';
+  if (comments.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'todo-inline-empty';
+    empty.textContent = '의견이 없습니다.';
+    listEl.appendChild(empty);
+    return;
+  }
+  comments.forEach((comment) => {
+    listEl.appendChild(createSharedCommentItem(comment, context));
+  });
+}
+
+function createSharedTodoItem(todo, context) {
+  const item = document.createElement('li');
+  item.className = 'todo-item shared-todo-item';
+  item.dataset.todoId = todo.id;
+  item.dataset.contextKey = context.key;
+
+  const main = document.createElement('div');
+  main.className = 'todo-main';
+
+  const markerRow = document.createElement('div');
+  markerRow.className = 'shared-marker-row';
+  const badge = document.createElement('span');
+  badge.className = 'shared-badge';
+  badge.textContent = '공유';
+  markerRow.appendChild(badge);
+  const author = document.createElement('span');
+  author.className = 'shared-author';
+  author.textContent = `작성자 ${getAuthorTag(todo.author)}`;
+  markerRow.appendChild(author);
+  main.appendChild(markerRow);
+
+  const titleInput = document.createElement('input');
+  titleInput.type = 'text';
+  titleInput.className = 'shared-todo-title';
+  titleInput.maxLength = 120;
+  titleInput.value = todo.title || '';
+  main.appendChild(titleInput);
+
+  const detailsInput = document.createElement('textarea');
+  detailsInput.className = 'shared-todo-details';
+  detailsInput.rows = 2;
+  detailsInput.maxLength = 1200;
+  detailsInput.value = todo.details || '';
+  main.appendChild(detailsInput);
+
+  const meta = document.createElement('span');
+  meta.className = 'meta';
+  meta.textContent = getSharedTodoMetaText(todo);
+  main.appendChild(meta);
+
+  const controls = document.createElement('div');
+  controls.className = 'todo-controls';
+
+  const prioritySelect = document.createElement('select');
+  prioritySelect.className = 'shared-todo-priority';
+  prioritySelect.innerHTML = `
+    <option value="1">높음</option>
+    <option value="2">보통</option>
+    <option value="3">낮음</option>
+  `;
+  prioritySelect.value = String(todo.priority || 2);
+  controls.appendChild(prioritySelect);
+
+  const dueDateInput = document.createElement('input');
+  dueDateInput.type = 'date';
+  dueDateInput.className = 'shared-todo-due';
+  dueDateInput.value = todo.dueDate || '';
+  controls.appendChild(dueDateInput);
+
+  const actions = document.createElement('div');
+  actions.className = 'actions shared-actions';
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'complete';
+  saveBtn.textContent = '저장';
+  saveBtn.dataset.sharedAction = 'save';
+  actions.appendChild(saveBtn);
+
+  const toggleDoneBtn = document.createElement('button');
+  toggleDoneBtn.type = 'button';
+  toggleDoneBtn.className = 'complete';
+  toggleDoneBtn.textContent = todo.isDone ? '미완료' : '완료';
+  toggleDoneBtn.dataset.sharedAction = 'toggle-done';
+  actions.appendChild(toggleDoneBtn);
+
+  if (Number(authUser?.id) === Number(context.ownerUserId)) {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'delete';
+    deleteBtn.textContent = '삭제';
+    deleteBtn.dataset.sharedAction = 'delete';
+    actions.appendChild(deleteBtn);
+  }
+
+  const commentToggleBtn = document.createElement('button');
+  commentToggleBtn.type = 'button';
+  commentToggleBtn.className = 'ghost-btn';
+  commentToggleBtn.textContent = '의견';
+  commentToggleBtn.dataset.sharedAction = 'toggle-comments';
+  actions.appendChild(commentToggleBtn);
+
+  controls.appendChild(actions);
+
+  const commentPanel = document.createElement('div');
+  commentPanel.className = 'shared-comment-panel hidden';
+  commentPanel.dataset.todoId = todo.id;
+
+  const commentList = document.createElement('ul');
+  commentList.className = 'shared-comment-list';
+  renderSharedComments(commentList, todo, context);
+  commentPanel.appendChild(commentList);
+
+  const commentComposer = document.createElement('div');
+  commentComposer.className = 'shared-comment-composer';
+  const commentInput = document.createElement('textarea');
+  commentInput.className = 'shared-comment-input';
+  commentInput.rows = 2;
+  commentInput.maxLength = 1200;
+  commentInput.placeholder = '의견을 작성하세요';
+  commentComposer.appendChild(commentInput);
+  const commentSubmit = document.createElement('button');
+  commentSubmit.type = 'button';
+  commentSubmit.className = 'complete';
+  commentSubmit.textContent = '등록';
+  commentSubmit.dataset.sharedAction = 'add-comment';
+  commentComposer.appendChild(commentSubmit);
+  commentPanel.appendChild(commentComposer);
+
+  main.appendChild(commentPanel);
+  item.append(main, controls);
+  return item;
+}
+
+function renderSharedTodosForBucket(bucket) {
+  const section = ensureSharedSection(bucket);
+  if (!section) {
+    return;
+  }
+  const visible = shouldShowSharedSection(bucket);
+  section.classList.toggle('hidden', !visible);
+  if (!visible) {
+    return;
+  }
+
+  const contextSelect = section.querySelector('.shared-context-select');
+  const composeForm = section.querySelector('.shared-compose-form');
+  const listEl = section.querySelector('.shared-todo-list');
+  if (!contextSelect || !composeForm || !listEl) {
+    return;
+  }
+
+  const contexts = getCollabContextsForBucket(bucket);
+  contextSelect.innerHTML = '';
+  if (contexts.length === 0) {
+    contextSelect.disabled = true;
+    composeForm.classList.add('is-disabled');
+    Array.from(composeForm.elements).forEach((input) => {
+      input.disabled = true;
+    });
+    setSharedListEmpty(listEl, '연결된 공유 버킷이 없습니다.');
+    return;
+  }
+
+  contexts.forEach((context) => {
+    const option = document.createElement('option');
+    option.value = context.key;
+    option.textContent = context.label;
+    contextSelect.appendChild(option);
+  });
+
+  const active = ensureActiveSharedContext(bucket);
+  contextSelect.disabled = false;
+  if (active) {
+    contextSelect.value = active.key;
+  }
+  composeForm.classList.remove('is-disabled');
+  Array.from(composeForm.elements).forEach((input) => {
+    input.disabled = false;
+  });
+
+  if (!active) {
+    setSharedListEmpty(listEl, '공유 컨텍스트를 찾을 수 없습니다.');
+    return;
+  }
+
+  const todos = Array.isArray(sharedTodosByContext[active.key]) ? sharedTodosByContext[active.key] : [];
+  listEl.innerHTML = '';
+  if (todos.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'todo-inline-empty';
+    empty.textContent = '공유 작업이 없습니다.';
+    listEl.appendChild(empty);
+    return;
+  }
+
+  todos.forEach((todo) => {
+    listEl.appendChild(createSharedTodoItem(todo, active));
+  });
+}
+
+function renderCollabPanel() {
+  if (!collabPanelEl) {
+    return;
+  }
+
+  const ready = isServerSync && !!authUser;
+  collabPanelEl.classList.toggle('is-disabled', !ready);
+
+  if (collabProfileBadgeEl) {
+    const publicId = normalizePublicIdInput(collabProfile.publicId || authUser?.publicId || '');
+    collabProfileBadgeEl.textContent = ready
+      ? `내 고유ID: ${publicId ? `@${publicId}` : '미설정'}`
+      : '로그인 후 공유 기능을 사용할 수 있습니다.';
+  }
+
+  if (!ready || !collabSummary) {
+    if (collabInviteBucketSelectEl) {
+      collabInviteBucketSelectEl.innerHTML = '';
+      collabInviteBucketSelectEl.disabled = true;
+    }
+    if (collabReceivedInvitesEl) {
+      setSharedListEmpty(collabReceivedInvitesEl, '받은 초대가 없습니다.');
+    }
+    if (collabSentInvitesEl) {
+      setSharedListEmpty(collabSentInvitesEl, '보낸 초대가 없습니다.');
+    }
+    if (collabMembershipListEl) {
+      setSharedListEmpty(collabMembershipListEl, '공유 멤버가 없습니다.');
+    }
+    if (collabInviteTargetInputEl) {
+      collabInviteTargetInputEl.disabled = true;
+    }
+    if (collabInviteBucketSelectEl) {
+      collabInviteBucketSelectEl.disabled = true;
+    }
+    return;
+  }
+
+  const inviteableBuckets = buckets.filter((bucket) => isBucketShareEnabled(bucket));
+  if (collabInviteBucketSelectEl) {
+    collabInviteBucketSelectEl.innerHTML = '';
+    if (inviteableBuckets.length === 0) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = '공유 ON 버킷 없음';
+      collabInviteBucketSelectEl.appendChild(option);
+      collabInviteBucketSelectEl.disabled = true;
+    } else {
+      inviteableBuckets.forEach((bucket) => {
+        const option = document.createElement('option');
+        option.value = bucket;
+        option.textContent = getBucketLabel(bucket);
+        collabInviteBucketSelectEl.appendChild(option);
+      });
+      collabInviteBucketSelectEl.disabled = false;
+    }
+  }
+  if (collabInviteTargetInputEl) {
+    collabInviteTargetInputEl.disabled = inviteableBuckets.length === 0;
+  }
+
+  if (collabReceivedInvitesEl) {
+    const received = Array.isArray(collabSummary.receivedInvites) ? collabSummary.receivedInvites : [];
+    collabReceivedInvitesEl.innerHTML = '';
+    if (received.length === 0) {
+      setSharedListEmpty(collabReceivedInvitesEl, '받은 초대가 없습니다.');
+    } else {
+      received.forEach((invite) => {
+        const li = document.createElement('li');
+        li.className = 'collab-list-item';
+        li.textContent = `${getBucketLabel(invite.bucketKey)} / ${getAuthorTag(invite.owner)} (${invite.status})`;
+        if (invite.status === 'pending') {
+          const acceptBtn = document.createElement('button');
+          acceptBtn.type = 'button';
+          acceptBtn.className = 'complete';
+          acceptBtn.textContent = '수락';
+          acceptBtn.dataset.collabAction = 'accept-invite';
+          acceptBtn.dataset.inviteId = invite.id;
+          li.appendChild(acceptBtn);
+
+          const declineBtn = document.createElement('button');
+          declineBtn.type = 'button';
+          declineBtn.className = 'delete';
+          declineBtn.textContent = '거절';
+          declineBtn.dataset.collabAction = 'decline-invite';
+          declineBtn.dataset.inviteId = invite.id;
+          li.appendChild(declineBtn);
+        }
+        collabReceivedInvitesEl.appendChild(li);
+      });
+    }
+  }
+
+  if (collabSentInvitesEl) {
+    const sent = Array.isArray(collabSummary.sentInvites) ? collabSummary.sentInvites : [];
+    collabSentInvitesEl.innerHTML = '';
+    if (sent.length === 0) {
+      setSharedListEmpty(collabSentInvitesEl, '보낸 초대가 없습니다.');
+    } else {
+      sent.forEach((invite) => {
+        const li = document.createElement('li');
+        li.className = 'collab-list-item';
+        li.textContent = `${getBucketLabel(invite.bucketKey)} -> ${getAuthorTag(invite.invitee)} (${invite.status})`;
+        if (invite.status === 'pending') {
+          const cancelBtn = document.createElement('button');
+          cancelBtn.type = 'button';
+          cancelBtn.className = 'delete';
+          cancelBtn.textContent = '취소';
+          cancelBtn.dataset.collabAction = 'cancel-invite';
+          cancelBtn.dataset.inviteId = invite.id;
+          li.appendChild(cancelBtn);
+        }
+        collabSentInvitesEl.appendChild(li);
+      });
+    }
+  }
+
+  if (collabMembershipListEl) {
+    const owned = Array.isArray(collabSummary.ownedBuckets) ? collabSummary.ownedBuckets : [];
+    const joined = Array.isArray(collabSummary.joinedBuckets) ? collabSummary.joinedBuckets : [];
+    collabMembershipListEl.innerHTML = '';
+
+    owned.forEach((entry) => {
+      (Array.isArray(entry.members) ? entry.members : []).forEach((member) => {
+        const li = document.createElement('li');
+        li.className = 'collab-list-item';
+        li.textContent = `[내 버킷 ${getBucketLabel(entry.bucketKey)}] ${member.publicId ? `@${member.publicId}` : `USER-${member.userId}`}`;
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'delete';
+        removeBtn.textContent = '제거';
+        removeBtn.dataset.collabAction = 'remove-membership';
+        removeBtn.dataset.membershipId = String(member.membershipId || '');
+        li.appendChild(removeBtn);
+        collabMembershipListEl.appendChild(li);
+      });
+    });
+
+    joined.forEach((entry) => {
+      const li = document.createElement('li');
+      li.className = 'collab-list-item';
+      li.textContent = `[참여 ${getBucketLabel(entry.bucketKey)}] ${getAuthorTag(entry.owner)}`;
+      const leaveBtn = document.createElement('button');
+      leaveBtn.type = 'button';
+      leaveBtn.className = 'delete';
+      leaveBtn.textContent = '나가기';
+      leaveBtn.dataset.collabAction = 'remove-membership';
+      leaveBtn.dataset.membershipId = String(entry.membershipId || '');
+      li.appendChild(leaveBtn);
+      collabMembershipListEl.appendChild(li);
+    });
+
+    if (!collabMembershipListEl.children.length) {
+      setSharedListEmpty(collabMembershipListEl, '공유 멤버가 없습니다.');
+    }
+  }
+}
+
+async function submitCollabInvite() {
+  if (!collabInviteBucketSelectEl || !collabInviteTargetInputEl) {
+    return;
+  }
+  const bucketKey = collabInviteBucketSelectEl.value;
+  if (!bucketKey || !isBucketShareEnabled(bucketKey)) {
+    showToast('버킷 공유를 먼저 켜 주세요.', 'error');
+    return;
+  }
+  const targetPublicId = normalizePublicIdInput(collabInviteTargetInputEl.value);
+  if (!isValidPublicId(targetPublicId)) {
+    showToast('상대 고유ID 형식이 올바르지 않습니다.', 'error');
+    return;
+  }
+
+  const response = await collabApiRequest(
+    '/collab/invites',
+    {
+      method: 'POST',
+      body: JSON.stringify({ bucketKey, targetPublicId }),
+    },
+    { withCsrf: true },
+  );
+  if (!response.ok) {
+    showToast('초대 전송에 실패했습니다.', 'error');
+    return;
+  }
+
+  collabInviteTargetInputEl.value = '';
+  await refreshCollabSummary({ includeTodos: true });
+  render();
+  showToast('초대를 보냈습니다.', 'success');
+}
+
+async function toggleBucketShareSetting(bucket) {
+  const targetBucket = normalizeBucketIdOrDefault(bucket, '');
+  if (!targetBucket) {
+    return;
+  }
+  if (!isServerSync || !authUser) {
+    showToast('로그인 후 사용할 수 있습니다.', 'error');
+    return;
+  }
+
+  const nextEnabled = !isBucketShareEnabled(targetBucket);
+  const response = await collabApiRequest(
+    `/collab/share-settings/${encodeURIComponent(targetBucket)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ enabled: nextEnabled }),
+    },
+    { withCsrf: true },
+  );
+  if (!response.ok) {
+    showToast('버킷 공유 설정 변경에 실패했습니다.', 'error');
+    return;
+  }
+
+  await refreshCollabSummary({ includeTodos: true });
+  render();
+  showToast(nextEnabled ? `${getBucketLabel(targetBucket)} 공유를 켰습니다.` : `${getBucketLabel(targetBucket)} 공유를 껐습니다.`, 'success');
+}
+
+async function handleCollabPanelAction(buttonEl) {
+  if (!buttonEl) {
+    return;
+  }
+  const action = buttonEl.dataset.collabAction;
+  if (!action) {
+    return;
+  }
+
+  if (action === 'accept-invite' || action === 'decline-invite' || action === 'cancel-invite') {
+    const inviteId = buttonEl.dataset.inviteId;
+    if (!inviteId) {
+      return;
+    }
+    const pathByAction = {
+      'accept-invite': `/collab/invites/${encodeURIComponent(inviteId)}/accept`,
+      'decline-invite': `/collab/invites/${encodeURIComponent(inviteId)}/decline`,
+      'cancel-invite': `/collab/invites/${encodeURIComponent(inviteId)}`,
+    };
+    const methodByAction = {
+      'accept-invite': 'POST',
+      'decline-invite': 'POST',
+      'cancel-invite': 'DELETE',
+    };
+    const response = await collabApiRequest(
+      pathByAction[action],
+      { method: methodByAction[action] },
+      { withCsrf: true },
+    );
+    if (!response.ok) {
+      showToast('요청 처리에 실패했습니다.', 'error');
+      return;
+    }
+    await refreshCollabSummary({ includeTodos: true });
+    render();
+    return;
+  }
+
+  if (action === 'remove-membership') {
+    const membershipId = buttonEl.dataset.membershipId;
+    if (!membershipId) {
+      return;
+    }
+    const response = await collabApiRequest(
+      `/collab/memberships/${encodeURIComponent(membershipId)}`,
+      { method: 'DELETE' },
+      { withCsrf: true },
+    );
+    if (!response.ok) {
+      showToast('멤버 변경에 실패했습니다.', 'error');
+      return;
+    }
+    await refreshCollabSummary({ includeTodos: true });
+    render();
+  }
+}
+
+async function submitSharedComposeForm(formEl) {
+  if (!formEl) {
+    return;
+  }
+  const bucket = formEl.dataset.bucket;
+  const context = ensureActiveSharedContext(bucket);
+  if (!context) {
+    showToast('공유 컨텍스트를 선택해 주세요.', 'error');
+    return;
+  }
+
+  const titleEl = formEl.querySelector('.shared-compose-title');
+  const detailsEl = formEl.querySelector('.shared-compose-details');
+  const priorityEl = formEl.querySelector('.shared-compose-priority');
+  const dueDateEl = formEl.querySelector('.shared-compose-due');
+  const title = String(titleEl?.value || '').trim();
+  if (!title) {
+    showToast('공유 작업 제목을 입력해 주세요.', 'error');
+    return;
+  }
+
+  const response = await collabApiRequest(
+    `/collab/shares/${encodeURIComponent(context.ownerUserId)}/${encodeURIComponent(context.bucketKey)}/todos`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        title,
+        details: detailsEl?.value || '',
+        priority: Number(priorityEl?.value || 2),
+        dueDate: dueDateEl?.value || '',
+      }),
+    },
+    { withCsrf: true },
+  );
+
+  if (!response.ok) {
+    showToast('공유 작업 추가에 실패했습니다.', 'error');
+    return;
+  }
+
+  if (titleEl) {
+    titleEl.value = '';
+  }
+  if (detailsEl) {
+    detailsEl.value = '';
+  }
+  if (priorityEl) {
+    priorityEl.value = '2';
+  }
+  if (dueDateEl) {
+    dueDateEl.value = '';
+  }
+
+  await refreshSharedTodosByContext(context);
+  render();
+}
+
+async function updateSharedTodoFromItem(itemEl, action) {
+  if (!itemEl) {
+    return;
+  }
+  const todoId = itemEl.dataset.todoId;
+  const found = getSharedTodoById(todoId);
+  if (!found) {
+    await refreshCollabSummary({ includeTodos: true });
+    render();
+    return;
+  }
+
+  const payload = {
+    revision: Number(found.todo.revision || 1),
+  };
+  if (action === 'save') {
+    payload.title = String(itemEl.querySelector('.shared-todo-title')?.value || '').trim();
+    payload.details = itemEl.querySelector('.shared-todo-details')?.value || '';
+    payload.priority = Number(itemEl.querySelector('.shared-todo-priority')?.value || found.todo.priority || 2);
+    payload.dueDate = itemEl.querySelector('.shared-todo-due')?.value || '';
+    payload.isDone = Boolean(found.todo.isDone);
+  } else if (action === 'toggle-done') {
+    payload.isDone = !Boolean(found.todo.isDone);
+    payload.title = found.todo.title;
+    payload.details = found.todo.details || '';
+    payload.priority = Number(found.todo.priority || 2);
+    payload.dueDate = found.todo.dueDate || '';
+  }
+
+  const response = await collabApiRequest(
+    `/collab/shared-todos/${encodeURIComponent(todoId)}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    },
+    { withCsrf: true },
+  );
+
+  if (response.status === 409) {
+    showToast('다른 사용자가 먼저 수정했습니다. 새로고침합니다.', 'error');
+    const context = parseCollabContextKey(found.contextKey);
+    if (context) {
+      await refreshSharedTodosByContext(context);
+    }
+    render();
+    return;
+  }
+  if (!response.ok) {
+    showToast('공유 작업 수정에 실패했습니다.', 'error');
+    return;
+  }
+
+  const context = parseCollabContextKey(found.contextKey);
+  if (context) {
+    await refreshSharedTodosByContext(context);
+  }
+  render();
+}
+
+async function deleteSharedTodo(todoId) {
+  const found = getSharedTodoById(todoId);
+  const response = await collabApiRequest(
+    `/collab/shared-todos/${encodeURIComponent(todoId)}`,
+    { method: 'DELETE' },
+    { withCsrf: true },
+  );
+  if (!response.ok) {
+    showToast('공유 작업 삭제에 실패했습니다.', 'error');
+    return;
+  }
+
+  if (found) {
+    const context = parseCollabContextKey(found.contextKey);
+    if (context) {
+      await refreshSharedTodosByContext(context);
+    }
+  } else {
+    await refreshCollabSummary({ includeTodos: true });
+  }
+  render();
+}
+
+async function addSharedComment(itemEl) {
+  const todoId = itemEl?.dataset.todoId;
+  if (!todoId) {
+    return;
+  }
+  const panel = itemEl.querySelector('.shared-comment-panel');
+  const input = panel?.querySelector('.shared-comment-input');
+  const body = String(input?.value || '').trim();
+  if (!body) {
+    showToast('의견 내용을 입력해 주세요.', 'error');
+    return;
+  }
+
+  const response = await collabApiRequest(
+    `/collab/shared-todos/${encodeURIComponent(todoId)}/comments`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ body }),
+    },
+    { withCsrf: true },
+  );
+  if (!response.ok) {
+    showToast('의견 등록에 실패했습니다.', 'error');
+    return;
+  }
+
+  if (input) {
+    input.value = '';
+  }
+  await refreshSharedComments(todoId);
+  render();
+}
+
+async function deleteSharedComment(commentId, todoId) {
+  const response = await collabApiRequest(
+    `/collab/comments/${encodeURIComponent(commentId)}`,
+    { method: 'DELETE' },
+    { withCsrf: true },
+  );
+  if (!response.ok) {
+    showToast('의견 삭제에 실패했습니다.', 'error');
+    return;
+  }
+  await refreshSharedComments(todoId);
+  render();
+}
+
+async function toggleSharedCommentPanel(itemEl) {
+  const panel = itemEl.querySelector('.shared-comment-panel');
+  if (!panel) {
+    return;
+  }
+  const willOpen = panel.classList.contains('hidden');
+  panel.classList.toggle('hidden');
+  if (!willOpen) {
+    return;
+  }
+  const todoId = itemEl.dataset.todoId;
+  if (!Array.isArray(sharedCommentsByTodo[todoId])) {
+    await refreshSharedComments(todoId);
+    render();
+  }
+}
+
 function renderTodoList() {
   const todayNotes = getTodayActiveNoteEntries();
   const sorted = sortTodos(state.todos);
@@ -2143,6 +3903,9 @@ function renderTodosByBucket() {
     } else {
       renderTodoItems(listEl, sorted);
     }
+
+    ensureBucketShareToggle(bucket);
+    renderSharedTodosForBucket(bucket);
   }
 }
 
@@ -2703,41 +4466,9 @@ function registerEvents() {
   registerProjectColumnControls();
 
   if (quickForm) {
-    const hideQuickAdd = () => {
-      if (quickAddBody) {
-        quickAddBody.classList.add('hidden');
-      }
-      if (toggleQuickAddBtn) {
-        toggleQuickAddBtn.setAttribute('aria-expanded', 'false');
-        toggleQuickAddBtn.setAttribute('aria-pressed', 'false');
-        toggleQuickAddBtn.textContent = '펼치기';
-        toggleQuickAddBtn.classList.remove('is-active');
-      }
-    };
-    const showQuickAdd = () => {
-      if (quickAddBody) {
-        quickAddBody.classList.remove('hidden');
-      }
-      if (toggleQuickAddBtn) {
-        toggleQuickAddBtn.setAttribute('aria-expanded', 'true');
-        toggleQuickAddBtn.setAttribute('aria-pressed', 'true');
-        toggleQuickAddBtn.textContent = '접기';
-        toggleQuickAddBtn.classList.add('is-active');
-      }
-      if (quickInput) {
-        quickInput.focus();
-      }
-    };
-
-    toggleQuickAddBtn?.addEventListener('click', () => {
-      if (quickAddBody?.classList.contains('hidden')) {
-        showQuickAdd();
-      } else {
-        hideQuickAdd();
-      }
-    });
-
-    hideQuickAdd();
+    if (quickAddBody) {
+      quickAddBody.classList.remove('hidden');
+    }
 
     quickForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -2768,7 +4499,7 @@ function registerEvents() {
       if (bucketSelect) {
         bucketSelect.value = 'bucket4';
       }
-      showQuickAdd();
+      quickInput?.focus();
     });
   }
 
@@ -2930,6 +4661,7 @@ function registerEvents() {
     profileEditorEl &&
     profileNicknameInput &&
     profileHonorificInput &&
+    profilePublicIdInput &&
     saveProfileBtn &&
     cancelProfileBtn
   ) {
@@ -2943,6 +4675,8 @@ function registerEvents() {
       const profile = normalizeUserProfile(state.userProfile);
       profileNicknameInput.value = profile.nickname;
       profileHonorificInput.value = profile.honorific;
+      profilePublicIdInput.value = normalizePublicIdInput(collabProfile.publicId || authUser?.publicId || '');
+      profilePublicIdInput.disabled = !isServerSync;
       profileEditorEl.classList.remove('hidden');
       toggleProfileEditorBtn.classList.add('is-active');
       toggleProfileEditorBtn.setAttribute('aria-expanded', 'true');
@@ -2958,12 +4692,28 @@ function registerEvents() {
       }
     });
 
-    saveProfileBtn.addEventListener('click', () => {
+    saveProfileBtn.addEventListener('click', async () => {
       state.userProfile = normalizeUserProfile({
         nickname: profileNicknameInput.value,
         honorific: profileHonorificInput.value,
       });
       saveLocalState();
+      queueSync(true);
+
+      if (isServerSync && authUser) {
+        const nextPublicId = normalizePublicIdInput(profilePublicIdInput.value);
+        const currentPublicId = normalizePublicIdInput(collabProfile.publicId || authUser.publicId || '');
+        if (nextPublicId !== currentPublicId) {
+          const ok = await savePublicIdToServer(nextPublicId);
+          if (!ok) {
+            profilePublicIdInput.focus();
+            profilePublicIdInput.select();
+            return;
+          }
+        }
+      }
+
+      await refreshCollabSummary({ includeTodos: true });
       updateAuthUI();
       hideProfileEditor();
       showToast('호칭을 저장했습니다.', 'success');
@@ -2973,7 +4723,7 @@ function registerEvents() {
       hideProfileEditor();
     });
 
-    [profileNicknameInput, profileHonorificInput].forEach((input) => {
+    [profileNicknameInput, profileHonorificInput, profilePublicIdInput].forEach((input) => {
       input.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') {
           event.preventDefault();
@@ -3018,10 +4768,126 @@ function registerEvents() {
         // ignore
       }
 
-      isServerSync = false;
-      authUser = null;
-      state.version = 0;
+      applyAuthState(null);
       updateAuthUI();
+      render();
+    });
+  }
+
+  if (collabInviteFormEl) {
+    collabInviteFormEl.addEventListener('submit', (event) => {
+      event.preventDefault();
+      submitCollabInvite().catch(() => {
+        showToast('초대 요청 처리에 실패했습니다.', 'error');
+      });
+    });
+  }
+
+  if (collabPanelEl) {
+    collabPanelEl.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-collab-action]');
+      if (!button) {
+        return;
+      }
+      handleCollabPanelAction(button).catch(() => {
+        showToast('공유 요청 처리에 실패했습니다.', 'error');
+      });
+    });
+  }
+
+  if (boardEl) {
+    boardEl.addEventListener('change', (event) => {
+      const contextSelect = event.target.closest('.shared-context-select');
+      if (!contextSelect) {
+        return;
+      }
+      const section = contextSelect.closest('.shared-todo-section');
+      const bucket = section?.dataset.bucket;
+      if (!bucket) {
+        return;
+      }
+      const context = parseCollabContextKey(contextSelect.value);
+      if (!context) {
+        return;
+      }
+      activeSharedContextByBucket[bucket] = context.key;
+      if (!Array.isArray(sharedTodosByContext[context.key])) {
+        refreshSharedTodosByContext(context)
+          .then(() => {
+            render();
+          })
+          .catch(() => {});
+        return;
+      }
+      render();
+    });
+
+    boardEl.addEventListener('submit', (event) => {
+      const form = event.target.closest('.shared-compose-form');
+      if (!form) {
+        return;
+      }
+      event.preventDefault();
+      submitSharedComposeForm(form).catch(() => {
+        showToast('공유 작업 추가에 실패했습니다.', 'error');
+      });
+    });
+
+    boardEl.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-shared-action]');
+      if (!button) {
+        return;
+      }
+      const action = button.dataset.sharedAction;
+      if (!action) {
+        return;
+      }
+      if (action === 'toggle-share-setting') {
+        const bucket = button.dataset.bucket;
+        toggleBucketShareSetting(bucket).catch(() => {
+          showToast('버킷 공유 설정 변경에 실패했습니다.', 'error');
+        });
+        return;
+      }
+      const itemEl = button.closest('.shared-todo-item');
+      if (!itemEl) {
+        return;
+      }
+
+      if (action === 'save' || action === 'toggle-done') {
+        updateSharedTodoFromItem(itemEl, action).catch(() => {
+          showToast('공유 작업 수정에 실패했습니다.', 'error');
+        });
+        return;
+      }
+      if (action === 'delete') {
+        deleteSharedTodo(itemEl.dataset.todoId).catch(() => {
+          showToast('공유 작업 삭제에 실패했습니다.', 'error');
+        });
+        return;
+      }
+      if (action === 'toggle-comments') {
+        toggleSharedCommentPanel(itemEl).catch(() => {
+          showToast('의견 패널을 열 수 없습니다.', 'error');
+        });
+        return;
+      }
+      if (action === 'add-comment') {
+        addSharedComment(itemEl).catch(() => {
+          showToast('의견 등록에 실패했습니다.', 'error');
+        });
+        return;
+      }
+      if (action === 'delete-comment') {
+        const commentId = button.dataset.commentId;
+        const todoId = itemEl.dataset.todoId;
+        if (!commentId || !todoId) {
+          return;
+        }
+        deleteSharedComment(commentId, todoId).catch(() => {
+          showToast('의견 삭제에 실패했습니다.', 'error');
+        });
+      }
     });
   }
 }
@@ -3155,6 +5021,7 @@ function registerServiceWorker() {
 async function bootstrap() {
   formatToday();
   registerViewportClassSync();
+  registerStatePollingEvents();
   state.selectedDate = state.selectedDate || toLocalIsoDate(new Date());
   loadStateFromLocal();
 
@@ -3176,21 +5043,16 @@ async function bootstrap() {
       };
 
       if (serverState.exists && serverState.hasData) {
-        const merged = normalizeStateFromServer({ ...serverState.state, version: serverState.version });
-        state.todos = merged.todos;
-        state.doneLog = merged.doneLog;
-        state.calendarItems = merged.calendarItems;
-        state.bucketLabels = normalizeBucketLabels(merged.bucketLabels);
-        state.bucketOrder = normalizeBucketOrder(merged.bucketOrder);
-        state.bucketVisibility = normalizeBucketVisibility(merged.bucketVisibility);
-        state.projectLanes = normalizeProjectLanes(merged.projectLanes);
-        state.categories = normalizeCategoryState(merged.categories);
-        state.userProfile = normalizeUserProfile(merged.userProfile || state.userProfile);
-        state.version = Number(serverState.version || 0);
+        applyServerStateSnapshot(serverState.state, Number(serverState.version || 0), {
+          shouldRender: false,
+          shouldPersist: false,
+        });
       } else if (hasStoredData(localBackup)) {
         queueSync();
       }
     }
+
+    await refreshCollabSummary({ includeTodos: true });
   }
 
   ensureCategoryIntegrity();
@@ -3213,6 +5075,7 @@ async function bootstrap() {
 
 bootstrap().catch(() => {
   registerViewportClassSync();
+  registerStatePollingEvents();
   ensureBucketColumns();
   ensureBucketSelectOptions();
   initializeRouteModules();

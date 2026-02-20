@@ -569,6 +569,134 @@ async function ensureStateSchemas() {
   }
 }
 
+async function ensureCollabSchemas() {
+  await ensureColumnIfMissing('users', 'public_id', 'TEXT');
+  await ensureColumnIfMissing('users', 'public_id_normalized', 'TEXT');
+  await ensureColumnIfMissing('users', 'public_id_updated_at', 'TEXT');
+
+  await run(
+    `
+    CREATE TABLE IF NOT EXISTS bucket_share_settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_user_id INTEGER NOT NULL,
+      bucket_key TEXT NOT NULL,
+      is_enabled INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(owner_user_id, bucket_key)
+    )
+  `,
+  );
+  await run(
+    `
+    CREATE TABLE IF NOT EXISTS bucket_share_invites (
+      id TEXT PRIMARY KEY,
+      owner_user_id INTEGER NOT NULL,
+      bucket_key TEXT NOT NULL,
+      invitee_user_id INTEGER NOT NULL,
+      inviter_user_id INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      responded_at TEXT,
+      FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (invitee_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (inviter_user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `,
+  );
+  await run(
+    `
+    CREATE TABLE IF NOT EXISTS bucket_share_memberships (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_user_id INTEGER NOT NULL,
+      bucket_key TEXT NOT NULL,
+      member_user_id INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member',
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (member_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE(owner_user_id, bucket_key, member_user_id)
+    )
+  `,
+  );
+  await run(
+    `
+    CREATE TABLE IF NOT EXISTS shared_bucket_todos (
+      id TEXT PRIMARY KEY,
+      owner_user_id INTEGER NOT NULL,
+      bucket_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      details TEXT NOT NULL DEFAULT '',
+      subtasks_json TEXT NOT NULL DEFAULT '[]',
+      priority INTEGER NOT NULL DEFAULT 2,
+      due_date TEXT NOT NULL DEFAULT '',
+      is_done INTEGER NOT NULL DEFAULT 0,
+      revision INTEGER NOT NULL DEFAULT 1,
+      created_by_user_id INTEGER NOT NULL,
+      updated_by_user_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (updated_by_user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `,
+  );
+  await run(
+    `
+    CREATE TABLE IF NOT EXISTS shared_todo_comments (
+      id TEXT PRIMARY KEY,
+      todo_id TEXT NOT NULL,
+      owner_user_id INTEGER NOT NULL,
+      author_user_id INTEGER NOT NULL,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT,
+      FOREIGN KEY (todo_id) REFERENCES shared_bucket_todos(id) ON DELETE CASCADE,
+      FOREIGN KEY (owner_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (author_user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `,
+  );
+
+  await run('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_id_norm ON users(public_id_normalized)');
+  await run('CREATE INDEX IF NOT EXISTS idx_share_settings_owner ON bucket_share_settings(owner_user_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_invites_invitee_status ON bucket_share_invites(invitee_user_id, status)');
+  await run('CREATE INDEX IF NOT EXISTS idx_invites_owner_bucket_status ON bucket_share_invites(owner_user_id, bucket_key, status)');
+  await run('CREATE INDEX IF NOT EXISTS idx_memberships_member_status ON bucket_share_memberships(member_user_id, status)');
+  await run('CREATE INDEX IF NOT EXISTS idx_memberships_owner_bucket_status ON bucket_share_memberships(owner_user_id, bucket_key, status)');
+  await run('CREATE INDEX IF NOT EXISTS idx_shared_todos_owner_bucket_done ON shared_bucket_todos(owner_user_id, bucket_key, is_done)');
+  await run('CREATE INDEX IF NOT EXISTS idx_shared_todos_updated_at ON shared_bucket_todos(updated_at)');
+  await run('CREATE INDEX IF NOT EXISTS idx_shared_comments_todo_created ON shared_todo_comments(todo_id, created_at)');
+  await run('CREATE INDEX IF NOT EXISTS idx_shared_comments_author_created ON shared_todo_comments(author_user_id, created_at)');
+
+  await run(
+    `
+    INSERT INTO bucket_share_settings (owner_user_id, bucket_key, is_enabled, created_at, updated_at)
+    SELECT owner_user_id, bucket_key, 1, datetime('now'), datetime('now')
+    FROM (
+      SELECT DISTINCT owner_user_id, bucket_key
+      FROM bucket_share_memberships
+      WHERE status = 'active'
+      UNION
+      SELECT DISTINCT owner_user_id, bucket_key
+      FROM bucket_share_invites
+      WHERE status = 'pending'
+      UNION
+      SELECT DISTINCT owner_user_id, bucket_key
+      FROM shared_bucket_todos
+    )
+    ON CONFLICT(owner_user_id, bucket_key) DO NOTHING
+  `,
+  );
+}
+
 function getSessionRecord(sessionId) {
   return get(
     `
@@ -813,7 +941,8 @@ function ensureDatabase() {
     .then(() => run('CREATE INDEX IF NOT EXISTS idx_oauth_states_created_at ON oauth_states(created_at)'))
     .then(() => run('CREATE INDEX IF NOT EXISTS idx_idempotency_expires_at ON idempotency_store(expires_at)'))
     .then(() => ensureUsersSchema())
-    .then(() => ensureStateSchemas());
+    .then(() => ensureStateSchemas())
+    .then(() => ensureCollabSchemas());
 }
 
 const BUCKET_KEYS = ['bucket1', 'bucket2', 'bucket3', 'bucket4', 'bucket5', 'bucket6', 'bucket7', 'bucket8'];
@@ -1126,7 +1255,17 @@ async function cleanupIdempotencyStore() {
 
 async function loadUserById(userId) {
   return get(
-    'SELECT id, kakao_id, nickname, email, profile_image, last_login_at FROM users WHERE id = ?',
+    `SELECT
+      id,
+      kakao_id,
+      nickname,
+      email,
+      profile_image,
+      last_login_at,
+      public_id,
+      public_id_updated_at
+    FROM users
+    WHERE id = ?`,
     [userId],
   );
 }
@@ -1156,9 +1295,19 @@ async function upsertUser(profile) {
     insertValues,
   );
 
-  return get('SELECT id, kakao_id, nickname, email, profile_image FROM users WHERE kakao_id = ?', [
-    profile.kakaoId,
-  ]);
+  return get(
+    `SELECT
+      id,
+      kakao_id,
+      nickname,
+      email,
+      profile_image,
+      public_id,
+      public_id_updated_at
+    FROM users
+    WHERE kakao_id = ?`,
+    [profile.kakaoId],
+  );
 }
 
 async function getStateRow(userId) {
@@ -1369,6 +1518,7 @@ function validateCsrf(req, res, next) {
 let authRouterInstance = null;
 let stateRouterInstance = null;
 let holidaysRouterInstance = null;
+let collabRouterInstance = null;
 
 function createAuthRouter() {
   if (!authRouterInstance) {
@@ -1458,6 +1608,30 @@ function createHolidaysRouter() {
   return holidaysRouterInstance;
 }
 
+function createCollabRouter() {
+  if (!collabRouterInstance) {
+    const { createCollabRouter } = require('./server/modules/collab/router');
+    const { createCollabService } = require('./server/modules/collab/service');
+    const { createCollabRepository } = require('./server/modules/collab/repository');
+
+    const repository = createCollabRepository({
+      run,
+      get,
+      all,
+    });
+    const service = createCollabService({
+      repository,
+    });
+
+    collabRouterInstance = createCollabRouter({
+      validateCsrf,
+      service,
+    });
+  }
+
+  return collabRouterInstance;
+}
+
 app.use(helmet());
 app.use(
   rateLimit({
@@ -1514,6 +1688,7 @@ app.use(
   createAuthRouter(),
 );
 app.use('/api/state', createStateRouter());
+app.use('/api/collab', authSessionMiddleware, requireAuth, createCollabRouter());
 
 app.get('/sw.js', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -1615,6 +1790,7 @@ module.exports = {
   createHolidaysRouter,
   createAuthRouter,
   createStateRouter,
+  createCollabRouter,
   authSessionMiddleware,
   requireAuth,
   validateCsrf,
@@ -1642,4 +1818,5 @@ module.exports = {
   loadUserById,
   upsertUser,
   ensureDatabase,
+  ensureCollabSchemas,
 };
