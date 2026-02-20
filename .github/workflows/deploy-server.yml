@@ -22,27 +22,62 @@ jobs:
       - name: Prepare SSH key
         env:
           SSH_KEY: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          SSH_KEY_B64: ${{ secrets.SERVER_SSH_PRIVATE_KEY_B64 }}
           SSH_HOST: ${{ secrets.SERVER_HOST }}
           SSH_USER: ${{ secrets.SERVER_USER }}
           SSH_PORT: ${{ secrets.SERVER_SSH_PORT }}
           APP_PATH: ${{ secrets.SERVER_APP_PATH }}
         run: |
           set -euo pipefail
-          required_vars=("SSH_KEY" "SSH_HOST" "SSH_USER" "APP_PATH")
+          required_vars=("SSH_HOST" "SSH_USER" "APP_PATH")
           for var_name in "${required_vars[@]}"; do
             if [ -z "${!var_name:-}" ]; then
-              echo "::error title=Missing secret::${var_name} is required. Set SERVER_SSH_PRIVATE_KEY, SERVER_HOST, SERVER_USER, SERVER_APP_PATH."
+              echo "::error title=Missing secret::${var_name} is required. Set SERVER_HOST, SERVER_USER, SERVER_APP_PATH."
               exit 1
             fi
           done
 
+          if [ -z "${SSH_KEY:-}" ] && [ -z "${SSH_KEY_B64:-}" ]; then
+            echo "::error title=Missing secret::Set SERVER_SSH_PRIVATE_KEY or SERVER_SSH_PRIVATE_KEY_B64."
+            exit 1
+          fi
+
           mkdir -p ~/.ssh
           umask 077
-          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+
+          if [ -n "${SSH_KEY:-}" ]; then
+            KEY_CONTENT="$(printf '%s' "$SSH_KEY" | tr -d '\r')"
+            if printf '%s' "$KEY_CONTENT" | grep -q '\\n'; then
+              KEY_CONTENT="$(printf '%b' "$KEY_CONTENT")"
+            fi
+            printf '%s\n' "$KEY_CONTENT" > ~/.ssh/deploy_key
+          else
+            if ! printf '%s' "$SSH_KEY_B64" | tr -d '\r\n ' | base64 -d > ~/.ssh/deploy_key 2>/dev/null; then
+              echo "::error title=Invalid secret::SERVER_SSH_PRIVATE_KEY_B64 is not valid base64."
+              exit 1
+            fi
+          fi
+
           chmod 600 ~/.ssh/deploy_key
 
+          if grep -q "PUBLIC KEY" ~/.ssh/deploy_key; then
+            echo "::error title=Wrong key type::A public key was provided. Use a private key secret."
+            exit 1
+          fi
+
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null 2>&1; then
+            echo "::error title=Invalid private key::Could not parse SSH private key. Re-save exact key text or use SERVER_SSH_PRIVATE_KEY_B64."
+            exit 1
+          fi
+
+          echo "[deploy] key fingerprint:"
+          ssh-keygen -lf ~/.ssh/deploy_key || true
+
           PORT="${SSH_PORT:-22}"
-          ssh-keyscan -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+          if ! ssh-keyscan -T 8 -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+            echo "::error title=SSH host unreachable::ssh-keyscan failed for ${SSH_HOST}:${PORT}"
+            exit 1
+          fi
           chmod 600 ~/.ssh/known_hosts
           ssh -vv -i ~/.ssh/deploy_key -p "$PORT" \
             -o BatchMode=yes \
