@@ -1515,13 +1515,32 @@ app.use(
 );
 app.use('/api/state', createStateRouter());
 
-app.use(express.static(PUBLIC_ROOT));
+app.get('/sw.js', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.sendFile(path.join(PUBLIC_ROOT, 'sw.js'));
+});
+
+app.use(
+  express.static(PUBLIC_ROOT, {
+    setHeaders: (res, filePath) => {
+      const normalized = String(filePath || '').replace(/\\/g, '/');
+      if (normalized.endsWith('/index.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+        return;
+      }
+      if (/\.(?:css|js|mjs)$/i.test(normalized)) {
+        res.setHeader('Cache-Control', 'no-cache');
+      }
+    },
+  }),
+);
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) {
     res.status(404).json({ error: 'not_found' });
     return;
   }
 
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.sendFile(path.join(PUBLIC_ROOT, 'index.html'));
 });
 
@@ -1624,4 +1643,3 @@ module.exports = {
   upsertUser,
   ensureDatabase,
 };
-

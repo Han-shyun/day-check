@@ -11,6 +11,12 @@
   startOfWeek,
   toLocalIsoDate,
 } from './core/date-utils.js';
+import { APP_ROUTES, createRouter, ROUTE_STORAGE_KEY } from './app/router.js';
+import { createTodoUi } from './features/todo/ui.js';
+import { createBucketUi } from './features/bucket/ui.js';
+import { createCalendarUi } from './features/calendar/ui.js';
+import { createReportUi } from './features/report/ui.js';
+import { createAuthUi } from './features/auth/ui.js';
 const TODO_STORAGE_KEY = 'day-check.main.todos.v4';
 const DONE_STORAGE_KEY = 'day-check.main.doneLog.v1';
 const CALENDAR_STORAGE_KEY = 'day-check.main.calendarItems.v1';
@@ -68,28 +74,34 @@ let eventsRegistered = false;
 let columnResizeObserver = null;
 let toastHostEl = null;
 let calendarMode = 'note';
+let currentRoute = 'home';
+let appRouter = null;
+let routeTransitionTimer = null;
+let routeModules = {};
+let authView = null;
+let viewportClassRegistered = false;
+
+const routeOutletEl = document.getElementById('routeOutlet');
+const routeLinkEls = Array.from(document.querySelectorAll('[data-route-link]'));
+const routeViewEls = Array.from(document.querySelectorAll('[data-route-view]'));
 
 const dateEl = document.getElementById('todayDate');
 const todoCountEl = document.getElementById('todoCount');
 const todoListEl = document.getElementById('todoList');
 const todoTemplate = document.getElementById('todoItemTemplate');
 const boardEl = document.querySelector('.board');
-
-const todoComposer = document.getElementById('todoComposer');
-const todoTextarea = document.getElementById('todoTextarea');
-const composerDate = document.getElementById('composerDate');
-const composerPriority = document.getElementById('composerPriority');
-const composerCategory = document.getElementById('composerCategory');
-const openCategoryInlineBtn = document.getElementById('openCategoryInlineBtn');
-const inlineCategoryCreate = document.getElementById('inlineCategoryCreate');
-const newCategoryInput = document.getElementById('newCategoryInput');
-const createCategoryBtn = document.getElementById('createCategoryBtn');
-const cancelCategoryBtn = document.getElementById('cancelCategoryBtn');
+const addProjectColumnBtn = document.getElementById('addProjectColumnBtn');
+const removeProjectColumnBtn = document.getElementById('removeProjectColumnBtn');
 
 const authStatusEl = document.getElementById('authStatus');
 const authBtn = document.getElementById('authBtn');
+const appHeaderEl = document.getElementById('appHeader');
 
 const weekRangeEl = document.getElementById('weekRange');
+const weeklyDoneCountEl = document.getElementById('weeklyDoneCount');
+const weeklyDoneListEl = document.getElementById('weeklyDoneList');
+const weeklyPendingCountEl = document.getElementById('weeklyPendingCount');
+const weeklyPendingListEl = document.getElementById('weeklyPendingList');
 const quickForm = document.getElementById('quickAddForm');
 const quickAddBody = document.getElementById('quickAddBody');
 const toggleQuickAddBtn = document.getElementById('toggleQuickAddBtn');
@@ -775,6 +787,13 @@ function createBucketColumn(bucket) {
   const head = document.createElement('div');
   head.className = 'column-head';
 
+  const dragHandle = document.createElement('button');
+  dragHandle.type = 'button';
+  dragHandle.className = 'column-drag-handle';
+  dragHandle.setAttribute('aria-label', '버킷 이동');
+  dragHandle.textContent = '↕';
+  head.appendChild(dragHandle);
+
   const title = document.createElement('h2');
   title.id = `bucket-title-${bucket}`;
   title.className = 'bucket-title';
@@ -880,9 +899,6 @@ function applyBucketOrder() {
 
 function applyBucketVisibility() {
   const visibility = normalizeBucketVisibility(state.bucketVisibility);
-  buckets.forEach((bucket) => {
-    visibility[bucket] = true;
-  });
   if (!buckets.some((bucket) => visibility[bucket] !== false)) {
     visibility[normalizeBucketOrder(state.bucketOrder)[0] || buckets[0]] = true;
   }
@@ -1854,6 +1870,97 @@ function queueSync(immediate = false) {
   markStateDirty();
 }
 
+function updateRouteTabs(route) {
+  routeLinkEls.forEach((linkEl) => {
+    const linkRoute = String(linkEl.dataset.routeLink || '');
+    const isActive = linkRoute === route;
+    linkEl.classList.toggle('is-active', isActive);
+    if (isActive) {
+      linkEl.setAttribute('aria-current', 'page');
+    } else {
+      linkEl.removeAttribute('aria-current');
+    }
+  });
+}
+
+function focusRouteHeading(route) {
+  const activeView = routeViewEls.find((viewEl) => viewEl.dataset.routeView === route);
+  if (!activeView) {
+    return;
+  }
+  const heading = activeView.querySelector('h1, h2');
+  if (!heading) {
+    return;
+  }
+  heading.setAttribute('tabindex', '-1');
+  heading.focus({ preventScroll: true });
+}
+
+function animateRouteView(route, direction = 'none') {
+  if (!routeOutletEl) {
+    return;
+  }
+  const activeView = routeViewEls.find((viewEl) => viewEl.dataset.routeView === route);
+  if (!activeView) {
+    return;
+  }
+
+  if (routeTransitionTimer) {
+    clearTimeout(routeTransitionTimer);
+    routeTransitionTimer = null;
+  }
+
+  routeViewEls.forEach((viewEl) => {
+    viewEl.classList.remove('is-entering-forward', 'is-entering-backward');
+  });
+
+  if (direction === 'forward') {
+    activeView.classList.add('is-entering-forward');
+  } else if (direction === 'backward') {
+    activeView.classList.add('is-entering-backward');
+  }
+
+  routeTransitionTimer = setTimeout(() => {
+    routeViewEls.forEach((viewEl) => {
+      viewEl.classList.remove('is-entering-forward', 'is-entering-backward');
+    });
+    routeTransitionTimer = null;
+  }, 190);
+}
+
+function activateRoute(route, direction = 'none') {
+  currentRoute = APP_ROUTES.includes(route) ? route : 'home';
+
+  routeViewEls.forEach((viewEl) => {
+    const isActive = viewEl.dataset.routeView === currentRoute;
+    viewEl.hidden = !isActive;
+    viewEl.classList.toggle('is-active', isActive);
+  });
+
+  updateRouteTabs(currentRoute);
+  animateRouteView(currentRoute, direction);
+  focusRouteHeading(currentRoute);
+}
+
+function renderRoute(route) {
+  switch (route) {
+    case 'buckets':
+      renderTodosByBucket();
+      break;
+    case 'calendar':
+      renderCalendar();
+      renderSelectedDatePanel();
+      break;
+    case 'report':
+      renderWeeklyReport();
+      break;
+    case 'home':
+    default:
+      renderTodoList();
+      break;
+  }
+}
+
 function render() {
   ensureBucketColumns();
   ensureBucketSelectOptions();
@@ -1863,32 +1970,62 @@ function render() {
   applyProjectLaneSizes();
   applyBucketVisibility();
   applyBucketLabels();
-  renderTodoComposer();
-  renderTodoList();
-  renderTodosByBucket();
-  renderCalendar();
-  renderSelectedDatePanel();
-  renderWeeklyReport();
+  renderRoute(currentRoute);
+
+  const activeModule = routeModules[currentRoute];
+  if (activeModule?.render) {
+    activeModule.render(state);
+  }
+  if (authView?.render) {
+    authView.render({ isServerSync, authUser });
+  }
+
   updateProfileAliasUI();
 }
 
-function renderTodoComposer() {
-  if (!composerCategory) {
+function renderWeeklyReport() {
+  if (!weekRangeEl || !weeklyDoneCountEl || !weeklyDoneListEl || !weeklyPendingCountEl || !weeklyPendingListEl) {
     return;
   }
-  composerCategory.innerHTML = '';
-  const noneOption = document.createElement('option');
-  noneOption.value = '';
-  noneOption.textContent = '세부 프로젝트 없음';
-  composerCategory.appendChild(noneOption);
-  state.projectLanes
-    .filter((lane) => lane.bucket === 'bucket4')
-    .forEach((lane) => {
-      const option = document.createElement('option');
-      option.value = lane.id;
-      option.textContent = lane.name;
-      composerCategory.appendChild(option);
+
+  const weekStart = startOfWeek(new Date());
+  const weekEnd = endOfWeek(new Date());
+  const weekStartText = toLocalIsoDate(weekStart);
+  const weekEndText = toLocalIsoDate(weekEnd);
+
+  weekRangeEl.textContent = `${weekStartText} ~ ${weekEndText}`;
+
+  const weeklyDone = state.doneLog
+    .filter((item) => inCurrentWeek(item.completedAt))
+    .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
+  const weeklyPending = sortTodos(state.todos);
+
+  weeklyDoneCountEl.textContent = `${weeklyDone.length}개`;
+  weeklyPendingCountEl.textContent = `${weeklyPending.length}개`;
+  weeklyDoneListEl.innerHTML = '';
+  weeklyPendingListEl.innerHTML = '';
+
+  if (weeklyDone.length === 0) {
+    addEmptyMessage(weeklyDoneListEl, '이번 주 완료된 항목이 없습니다.');
+  } else {
+    weeklyDone.forEach((item) => {
+      const li = document.createElement('li');
+      const dueDateText = item.dueDate ? ` / 마감 ${formatDisplayDate(item.dueDate)}` : '';
+      li.textContent = `[${getTodoGroupLabel(item)}] ${item.title} (${formatDisplayDateTime(item.completedAt)}${dueDateText})`;
+      weeklyDoneListEl.appendChild(li);
     });
+  }
+
+  if (weeklyPending.length === 0) {
+    addEmptyMessage(weeklyPendingListEl, '남아 있는 항목이 없습니다.');
+  } else {
+    weeklyPending.forEach((item) => {
+      const li = document.createElement('li');
+      const dueDateText = item.dueDate ? ` / 마감 ${formatDisplayDate(item.dueDate)}` : '';
+      li.textContent = `[${getTodoGroupLabel(item)}] ${item.title}${dueDateText}`;
+      weeklyPendingListEl.appendChild(li);
+    });
+  }
 }
 
 function bindTodoDetailsInput(detailInput, todo) {
@@ -2323,9 +2460,17 @@ function addSelectedDateNote() {
   );
 }
 
+function isCompactCalendarViewport() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false;
+  }
+  return window.matchMedia('(max-width: 760px)').matches;
+}
+
 function renderCalendar() {
   const year = state.currentMonth.getFullYear();
   const month = state.currentMonth.getMonth();
+  const compactCalendar = isCompactCalendarViewport();
   const yearText = String(year);
   if (!HOLIDAYS_BY_YEAR[yearText]) {
     ensureHolidayDataForYear(year).finally(() => {
@@ -2406,12 +2551,15 @@ function renderCalendar() {
     const { scheduledCount, completedCount } = countDailyStats(dateText);
     const dailySummary = document.createElement('p');
     dailySummary.className = 'calendar-summary';
-    dailySummary.textContent = `일정 ${scheduledCount} / 완료 ${completedCount}`;
+    const summaryLabel = `일정 ${scheduledCount} / 완료 ${completedCount}`;
+    dailySummary.textContent = compactCalendar
+      ? `일${scheduledCount}/완${completedCount}`
+      : summaryLabel;
     const weekendLabel = weekendType === 'saturday' ? ' 토요일' : weekendType === 'sunday' ? ' 일요일' : '';
     const holidayDescription = isHoliday ? `, 공휴일(${holidayLabel})` : '';
     cell.setAttribute(
       'aria-label',
-      `${month + 1}월 ${dayNumber}일${weekendLabel}, ${dailySummary.textContent}${holidayDescription}`,
+      `${month + 1}월 ${dayNumber}일${weekendLabel}, ${summaryLabel}${holidayDescription}`,
     );
     cell.appendChild(dailySummary);
 
@@ -2426,18 +2574,18 @@ function renderCalendar() {
       const list = document.createElement('ul');
       list.className = 'calendar-item-list';
 
-      const MAX_VISIBLE_ITEMS = 3;
+      const maxVisibleItems = compactCalendar ? 2 : 3;
       const rangeEntries = entries.filter((entry) => entry.isRange);
       const otherEntries = entries.filter((entry) => !entry.isRange);
       const maxLaneIndex = rangeEntries.reduce(
         (maxLane, entry) => Math.max(maxLane, entry.rangeLane || 0),
         -1,
       );
-      const laneSlotCount = Math.min(MAX_VISIBLE_ITEMS, Math.max(0, maxLaneIndex + 1));
+      const laneSlotCount = Math.min(maxVisibleItems, Math.max(0, maxLaneIndex + 1));
       const laneSlots = Array.from({ length: laneSlotCount }, (_, lane) =>
         rangeEntries.find((entry) => (entry.rangeLane || 0) === lane) || null,
       );
-      const visibleOtherEntries = otherEntries.slice(0, Math.max(0, MAX_VISIBLE_ITEMS - laneSlotCount));
+      const visibleOtherEntries = otherEntries.slice(0, Math.max(0, maxVisibleItems - laneSlotCount));
       const visibleEntries = [...laneSlots, ...visibleOtherEntries];
       let renderedRealCount = 0;
 
@@ -2551,105 +2699,8 @@ function registerEvents() {
   registerBucketResizeObserver();
   registerBucketTitleEditors();
   registerBucketLaneControls();
-
-  if (todoComposer) {
-    todoComposer.addEventListener('submit', (event) => {
-      event.preventDefault();
-
-      const lines = todoTextarea.value
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean);
-
-      if (lines.length === 0) {
-        return;
-      }
-
-      lines.forEach((title) => {
-        state.todos.unshift(
-          createTodo({
-            title,
-            categoryId: composerCategory?.value || 'uncategorized',
-            bucket: 'bucket4',
-            priority: Number(composerPriority?.value || 2),
-            dueDate: composerDate?.value || '',
-          }),
-        );
-      });
-
-      saveLocalState();
-      queueSync();
-      render();
-      todoTextarea.value = '';
-      if (composerDate) {
-        composerDate.value = '';
-      }
-      if (composerPriority) {
-        composerPriority.value = '2';
-      }
-      if (todoTextarea) {
-        todoTextarea.focus();
-      }
-    });
-  }
-
-  if (openCategoryInlineBtn && inlineCategoryCreate) {
-    openCategoryInlineBtn.setAttribute('aria-pressed', 'false');
-    openCategoryInlineBtn.addEventListener('click', () => {
-      const isHidden = inlineCategoryCreate.classList.contains('hidden');
-      const nextHidden = !isHidden;
-      inlineCategoryCreate.classList.toggle('hidden', nextHidden);
-      openCategoryInlineBtn.classList.toggle('is-active', !nextHidden);
-      openCategoryInlineBtn.setAttribute('aria-pressed', String(!nextHidden));
-      if (!nextHidden && newCategoryInput) {
-        newCategoryInput.focus();
-      }
-    });
-
-    cancelCategoryBtn?.addEventListener('click', () => {
-      newCategoryInput.value = '';
-      inlineCategoryCreate.classList.add('hidden');
-      openCategoryInlineBtn.classList.remove('is-active');
-      openCategoryInlineBtn.setAttribute('aria-pressed', 'false');
-    });
-
-    createCategoryBtn?.addEventListener('click', () => {
-      const name = newCategoryInput?.value?.trim?.() || '';
-      if (!name) {
-        return;
-      }
-
-      const exists = state.categories.find((item) => item.name === name);
-      if (exists) {
-        if (composerCategory) {
-          composerCategory.value = exists.id;
-        }
-        newCategoryInput.value = '';
-        inlineCategoryCreate.classList.add('hidden');
-        return;
-      }
-
-      const category = { id: crypto.randomUUID(), name };
-      state.categories.push(category);
-      ensureCategoryIntegrity();
-      newCategoryInput.value = '';
-      if (composerCategory) {
-        composerCategory.value = category.id;
-      }
-      inlineCategoryCreate.classList.add('hidden');
-      openCategoryInlineBtn.classList.remove('is-active');
-      openCategoryInlineBtn.setAttribute('aria-pressed', 'false');
-      render();
-      queueSync();
-    });
-
-    newCategoryInput?.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        createCategoryBtn.click();
-      }
-    });
-  }
+  registerBucketDragControls();
+  registerProjectColumnControls();
 
   if (quickForm) {
     const hideQuickAdd = () => {
@@ -2974,6 +3025,89 @@ function registerEvents() {
     });
   }
 }
+
+function initializeRouteModules() {
+  routeModules = {
+    home: createTodoUi(),
+    buckets: createBucketUi(),
+    calendar: createCalendarUi(),
+    report: createReportUi(),
+  };
+
+  Object.entries(routeModules).forEach(([route, module]) => {
+    const root = routeViewEls.find((viewEl) => viewEl.dataset.routeView === route) || null;
+    module?.mount?.(root);
+  });
+
+  authView = createAuthUi();
+  authView?.mount?.(appHeaderEl);
+}
+
+function setupRouter() {
+  if (appRouter) {
+    return;
+  }
+
+  if (!routeOutletEl) {
+    currentRoute = 'home';
+    return;
+  }
+
+  appRouter = createRouter({
+    routes: APP_ROUTES,
+    storageKey: ROUTE_STORAGE_KEY,
+    defaultRoute: 'home',
+  });
+
+  appRouter.subscribe(({ route, direction }) => {
+    activateRoute(route, direction);
+    render();
+  });
+
+  routeLinkEls.forEach((linkEl) => {
+    linkEl.addEventListener('click', (event) => {
+      const route = String(linkEl.dataset.routeLink || '');
+      if (!APP_ROUTES.includes(route)) {
+        return;
+      }
+      event.preventDefault();
+      appRouter.navigate(route);
+    });
+  });
+
+  appRouter.init();
+}
+
+function isIphoneLikeDevice() {
+  if (typeof navigator === 'undefined') {
+    return false;
+  }
+  const ua = String(navigator.userAgent || '');
+  return /iPhone|iPod/i.test(ua);
+}
+
+function syncViewportClasses() {
+  if (typeof window === 'undefined' || !document.body) {
+    return;
+  }
+
+  const isPortrait = window.matchMedia('(orientation: portrait)').matches;
+  const isNarrow = window.matchMedia('(max-width: 980px)').matches;
+  document.body.classList.toggle('is-ios-portrait', isIphoneLikeDevice() && isPortrait);
+  document.body.classList.toggle('is-mobile-portrait', isPortrait && isNarrow);
+}
+
+function registerViewportClassSync() {
+  syncViewportClasses();
+  if (viewportClassRegistered || typeof window === 'undefined') {
+    return;
+  }
+
+  viewportClassRegistered = true;
+  window.addEventListener('resize', syncViewportClasses, { passive: true });
+  window.addEventListener('orientationchange', syncViewportClasses);
+}
+
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) {
     return;
@@ -2986,12 +3120,41 @@ function registerServiceWorker() {
   }
 
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    let refreshing = false;
+    const triggerReload = () => {
+      if (refreshing) {
+        return;
+      }
+      refreshing = true;
+      window.location.reload();
+    };
+
+    navigator.serviceWorker.addEventListener('controllerchange', triggerReload);
+
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then((registration) => {
+        registration.update().catch(() => {});
+        registration.addEventListener('updatefound', () => {
+          const installingWorker = registration.installing;
+          if (!installingWorker) {
+            return;
+          }
+
+          installingWorker.addEventListener('statechange', () => {
+            if (installingWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              triggerReload();
+            }
+          });
+        });
+      })
+      .catch(() => {});
   });
 }
 
 async function bootstrap() {
   formatToday();
+  registerViewportClassSync();
   state.selectedDate = state.selectedDate || toLocalIsoDate(new Date());
   loadStateFromLocal();
 
@@ -3034,6 +3197,8 @@ async function bootstrap() {
   saveLocalState();
   ensureBucketColumns();
   ensureBucketSelectOptions();
+  initializeRouteModules();
+  setupRouter();
   registerEvents();
   updateAuthUI();
   await ensureHolidayDataForYear(state.currentMonth.getFullYear()).catch(() => {});
@@ -3047,8 +3212,11 @@ async function bootstrap() {
 }
 
 bootstrap().catch(() => {
+  registerViewportClassSync();
   ensureBucketColumns();
   ensureBucketSelectOptions();
+  initializeRouteModules();
+  setupRouter();
   updateAuthUI();
   registerEvents();
   render();

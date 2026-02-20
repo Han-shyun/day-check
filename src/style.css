@@ -38,6 +38,11 @@ body {
   min-height: 100%;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   color: var(--text);
@@ -107,7 +112,7 @@ button {
   cursor: pointer;
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  min-height: 38px;
+  min-height: 44px;
   transition:
     transform 0.2s ease,
     box-shadow 0.2s ease,
@@ -158,7 +163,8 @@ button:focus-visible {
   display: none !important;
 }
 
-.layout {
+.layout,
+.app-shell {
   max-width: var(--layout-max-width);
   width: 100%;
   margin: 0 auto;
@@ -179,27 +185,33 @@ button:focus-visible {
   }
 }
 
-.layout > * {
+.layout > *,
+.app-shell > * {
   animation: card-rise 0.45s cubic-bezier(0.22, 0.61, 0.36, 1) both;
 }
 
-.layout > *:nth-child(2) {
+.layout > *:nth-child(2),
+.app-shell > *:nth-child(2) {
   animation-delay: 0.03s;
 }
 
-.layout > *:nth-child(3) {
+.layout > *:nth-child(3),
+.app-shell > *:nth-child(3) {
   animation-delay: 0.06s;
 }
 
-.layout > *:nth-child(4) {
+.layout > *:nth-child(4),
+.app-shell > *:nth-child(4) {
   animation-delay: 0.09s;
 }
 
-.layout > *:nth-child(5) {
+.layout > *:nth-child(5),
+.app-shell > *:nth-child(5) {
   animation-delay: 0.12s;
 }
 
-.layout > *:nth-child(6) {
+.layout > *:nth-child(6),
+.app-shell > *:nth-child(6) {
   animation-delay: 0.15s;
 }
 
@@ -215,6 +227,90 @@ button:focus-visible {
 .card:hover {
   border-color: rgba(0, 113, 227, 0.18);
   box-shadow: var(--shadow-md);
+}
+
+.app-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+}
+
+.app-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.75);
+  color: #303138;
+  text-decoration: none;
+  font-weight: 650;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.app-tab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(0, 113, 227, 0.35);
+  box-shadow: 0 8px 18px rgba(0, 113, 227, 0.12);
+}
+
+.app-tab.is-active,
+.app-tab[aria-current='page'] {
+  border-color: rgba(0, 113, 227, 0.4);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.route-outlet {
+  position: relative;
+}
+
+.route-view {
+  display: grid;
+  gap: var(--layout-gap);
+}
+
+.route-view[hidden] {
+  display: none !important;
+}
+
+@keyframes route-enter-forward {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes route-enter-backward {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.route-view.is-entering-forward {
+  animation: route-enter-forward 180ms ease both;
+}
+
+.route-view.is-entering-backward {
+  animation: route-enter-backward 180ms ease both;
 }
 
 .topbar,
@@ -1162,6 +1258,10 @@ button.is-active,
     --board-rows: 2;
   }
 
+  .app-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .topbar {
     flex-direction: column;
     align-items: flex-start;
@@ -1170,6 +1270,14 @@ button.is-active,
   .auth-area {
     justify-items: start;
     min-width: 0;
+  }
+
+  .board {
+    grid-auto-flow: row;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+    grid-auto-columns: auto;
+    grid-auto-rows: auto;
   }
 
   .calendar-form,
@@ -1190,9 +1298,34 @@ button.is-active,
     --layout-pad-y: 10px;
     --layout-pad-b: 18px;
     --board-rows: 1;
+    --calendar-grid-gap: 4px;
+  }
+
+  body {
+    background:
+      radial-gradient(120% 82% at 100% -6%, rgba(0, 113, 227, 0.13), rgba(0, 113, 227, 0)),
+      linear-gradient(180deg, #f7f8fc 0%, #f2f4fb 100%);
+  }
+
+  body::before,
+  body::after {
+    display: block;
+  }
+
+  .app-shell {
+    gap: 12px;
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+
+  .card {
+    border-radius: 16px;
+    border-color: rgba(60, 60, 67, 0.12);
+    box-shadow: 0 10px 24px rgba(26, 36, 64, 0.08);
   }
 
   .topbar,
+  .app-tabs,
   .quick-add,
   .todo-list-panel,
   .board-wrap,
@@ -1203,6 +1336,7 @@ button.is-active,
   }
 
   #quickAddForm,
+  .app-tabs,
   .calendar-form,
   .calendar-detail-grid,
   .report-grid,
@@ -1210,13 +1344,288 @@ button.is-active,
     grid-template-columns: 1fr;
   }
 
+  .board {
+    grid-auto-flow: row;
+    grid-template-rows: none;
+    grid-auto-columns: auto;
+    grid-auto-rows: auto;
+    align-items: stretch;
+  }
+
+  button:hover,
+  .app-tab:hover {
+    transform: none;
+    box-shadow: none;
+  }
+
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
+  .topbar {
+    gap: 10px;
+    padding: 14px 14px 12px;
+  }
+
+  h1 {
+    font-size: clamp(20px, 5.8vw, 24px);
+  }
+
+  .hero-copy {
+    max-width: none;
+    font-size: 13px;
+    line-height: 1.45;
+    margin-bottom: 6px;
+  }
+
+  .today-date-chip {
+    min-height: 26px;
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .auth-area {
+    width: 100%;
+    gap: 6px;
+    justify-items: stretch;
+  }
+
+  #authStatus,
+  .user-alias-preview {
+    width: fit-content;
+    max-width: 100%;
+    font-size: 11px;
+  }
+
+  .auth-area .kakao-btn,
+  .auth-area .ghost-btn {
+    width: 100%;
+  }
+
   .profile-editor {
     width: 100%;
     justify-content: stretch;
   }
 
+  .app-tabs {
+    position: fixed;
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    z-index: 70;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    padding: 6px;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.88);
+    background: rgba(249, 250, 255, 0.88);
+    backdrop-filter: blur(12px);
+    box-shadow:
+      0 18px 30px rgba(21, 36, 66, 0.17),
+      inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+
+  .app-tab {
+    min-height: 44px;
+    border-radius: 12px;
+    border-color: transparent;
+    background: transparent;
+    color: #4f5462;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .app-tab.is-active,
+  .app-tab[aria-current='page'] {
+    border-color: rgba(0, 113, 227, 0.18);
+    background: linear-gradient(180deg, #eef5ff 0%, #deebff 100%);
+    color: #0f4d9b;
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 8px 16px rgba(0, 113, 227, 0.18);
+  }
+
+  #quickAddForm {
+    gap: 9px;
+  }
+
+  #quickAddForm input,
+  #quickAddForm select,
+  #quickAddForm button,
+  .calendar-form input,
+  .calendar-form textarea,
+  .calendar-form button,
+  .calendar-form select,
+  .selected-note-composer textarea,
+  .selected-note-composer input {
+    min-height: 42px;
+  }
+
+  #quickAddForm button,
+  #calendarSubmitBtn,
+  #addSelectedDateNoteBtn {
+    font-weight: 700;
+  }
+
+  .quick-add-body {
+    max-height: 520px;
+  }
+
+  .quick-add-body.hidden {
+    max-height: 0;
+  }
+
+  .calendar-head {
+    align-items: stretch;
+  }
+
+  .calendar-head > h2 {
+    width: 100%;
+  }
+
+  .calendar-nav {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 6px;
+    align-items: center;
+  }
+
+  #calendarMonthLabel {
+    text-align: center;
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  #prevMonthBtn {
+    justify-self: start;
+  }
+
+  #nextMonthBtn {
+    justify-self: end;
+  }
+
+  .calendar-nav button {
+    min-height: 38px;
+    padding: 7px 8px;
+    font-size: 13px;
+  }
+
+  .calendar-weekdays {
+    margin-bottom: 6px;
+    font-size: 11px;
+    letter-spacing: -0.01em;
+  }
+
+  .calendar-cell {
+    min-height: clamp(84px, 23vw, 112px);
+    padding: 6px 5px;
+    border-radius: 8px;
+  }
+
+  .calendar-day {
+    font-size: 12px;
+    line-height: 1.1;
+  }
+
+  .calendar-holiday {
+    margin: 2px 0 4px;
+    font-size: 10px;
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .calendar-summary {
+    margin: 1px 0 4px;
+    font-size: 10px;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+
+  .calendar-item-list {
+    gap: 3px;
+  }
+
+  .calendar-item {
+    gap: 4px;
+    min-height: 16px;
+    padding: 1px 4px;
+    font-size: 10px;
+    border-radius: 5px;
+  }
+
+  .calendar-item.is-range {
+    min-height: 16px;
+  }
+
+  .type-badge {
+    display: none;
+  }
+
+  .calendar-item-text {
+    font-size: 10px;
+    line-height: 1.2;
+    -webkit-line-clamp: 1;
+  }
+
+  .calendar-remove {
+    width: 12px;
+    height: 12px;
+    min-height: 12px;
+    border-radius: 3px;
+    font-size: 9px;
+  }
+
+  .calendar-empty,
+  .calendar-more {
+    font-size: 10px;
+    line-height: 1.2;
+  }
+
+  .calendar-detail {
+    margin-top: 10px;
+    padding: 10px;
+  }
+
   .todo-item {
     grid-template-columns: 1fr;
+    gap: 10px;
+    border-radius: 12px;
+    padding: 12px;
+  }
+
+  .todo-main {
+    gap: 5px;
+  }
+
+  .title {
+    font-size: 15px;
+    line-height: 1.3;
+  }
+
+  .meta {
+    font-size: 11px;
+  }
+
+  .todo-detail-input {
+    min-height: 64px;
+  }
+
+  .column {
+    min-height: 220px;
+    max-height: none;
+    border-radius: 12px;
+    padding: 12px;
+  }
+
+  .board-toolbar-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .todo-controls {
@@ -1233,7 +1642,8 @@ button.is-active,
   }
 
   .actions button,
-  .selected-note-composer > button {
+  .selected-note-composer > button,
+  .board-toolbar-actions button {
     width: 100%;
   }
 
@@ -1241,10 +1651,97 @@ button.is-active,
   .calendar-grid {
     min-width: 0;
   }
+
+  .calendar-detail-grid article,
+  .report-grid article {
+    border-radius: 10px;
+    padding: 9px;
+  }
+
+  .report-list li {
+    border-radius: 9px;
+    padding: 8px;
+  }
+
+  .toast-host {
+    left: 10px;
+    right: 10px;
+    bottom: calc(86px + env(safe-area-inset-bottom));
+  }
+
+  .toast {
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+    border-radius: 10px;
+    padding: 10px 11px;
+  }
+}
+
+@media (max-width: 430px) and (orientation: portrait) {
+  :root {
+    --layout-gap: 8px;
+    --calendar-grid-gap: 3px;
+  }
+
+  .app-shell {
+    padding-left: 8px;
+    padding-right: 8px;
+    padding-bottom: calc(82px + env(safe-area-inset-bottom));
+  }
+
+  .app-tabs {
+    left: max(8px, env(safe-area-inset-left));
+    right: max(8px, env(safe-area-inset-right));
+  }
+
+  .app-tab {
+    min-height: 40px;
+    font-size: 11px;
+  }
+
+  .topbar,
+  .quick-add,
+  .todo-list-panel,
+  .board-wrap,
+  .calendar,
+  .report,
+  .column {
+    padding: 11px;
+  }
+
+  .board-wrap {
+    overflow-x: clip;
+  }
+
+  .board {
+    grid-template-columns: 1fr !important;
+    grid-auto-flow: row !important;
+    grid-template-rows: none !important;
+    grid-auto-columns: auto !important;
+    grid-auto-rows: auto !important;
+  }
+
+  .column {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .calendar-cell {
+    min-height: 78px;
+    padding: 5px 4px;
+  }
+
+  .calendar-summary,
+  .calendar-empty {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .layout > *,
+  .app-shell > *,
+  .route-view,
   .card,
   .calendar-cell,
   .calendar-item,
@@ -1253,4 +1750,24 @@ button.is-active,
     animation: none !important;
     transition: none !important;
   }
+}
+
+body.is-ios-portrait .board-wrap,
+body.is-mobile-portrait .board-wrap {
+  overflow-x: clip;
+}
+
+body.is-ios-portrait .board,
+body.is-mobile-portrait .board {
+  grid-template-columns: 1fr !important;
+  grid-auto-flow: row !important;
+  grid-template-rows: none !important;
+  grid-auto-columns: auto !important;
+  grid-auto-rows: auto !important;
+}
+
+body.is-ios-portrait .column,
+body.is-mobile-portrait .column {
+  width: 100%;
+  min-width: 0;
 }

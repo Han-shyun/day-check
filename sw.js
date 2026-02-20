@@ -1,5 +1,21 @@
-const CACHE_NAME = 'day-check-cache-v3';
-const APP_SHELL = ['/', '/index.html', '/src/style.css?v=day-check-style', '/src/main.js', '/manifest.webmanifest'];
+const CACHE_NAME = 'day-check-cache-v4';
+const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-180.png'];
+
+function isCacheableResponse(response) {
+  return Boolean(response) && response.status === 200 && response.type !== 'opaque';
+}
+
+function shouldUseNetworkFirst(request, url) {
+  if (request.mode === 'navigate') {
+    return true;
+  }
+
+  if (url.origin !== self.location.origin) {
+    return false;
+  }
+
+  return /\.(?:css|js|mjs|html|json)$/i.test(url.pathname);
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -37,26 +53,43 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) {
-        return cached;
-      }
+  const networkFirst = shouldUseNetworkFirst(request, url);
 
-      return fetch(request)
-        .then((response) => {
-          if (!response || response.status !== 200) {
+  event.respondWith(
+    (networkFirst
+      ? fetch(request)
+          .then((response) => {
+            if (isCacheableResponse(response)) {
+              const responseCopy = response.clone();
+              caches.open(CACHE_NAME).then((cache) => {
+                cache.put(request, responseCopy);
+              });
+            }
             return response;
+          })
+          .catch(async () => {
+            const cached = await caches.match(request);
+            if (cached) {
+              return cached;
+            }
+            return request.mode === 'navigate' ? caches.match('/index.html') : Response.error();
+          })
+      : caches.match(request).then((cached) => {
+          if (cached) {
+            return cached;
           }
 
-          const responseCopy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(request, responseCopy);
-          });
-
-          return response;
-        })
-        .catch(() => caches.match('/index.html'));
-    }),
+          return fetch(request)
+            .then((response) => {
+              if (isCacheableResponse(response)) {
+                const responseCopy = response.clone();
+                caches.open(CACHE_NAME).then((cache) => {
+                  cache.put(request, responseCopy);
+                });
+              }
+              return response;
+            })
+            .catch(() => (request.mode === 'navigate' ? caches.match('/index.html') : Response.error()));
+        })),
   );
 });
