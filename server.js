@@ -692,6 +692,7 @@ async function ensureCollabSchemas() {
       SELECT DISTINCT owner_user_id, bucket_key
       FROM shared_bucket_todos
     )
+    WHERE 1 = 1
     ON CONFLICT(owner_user_id, bucket_key) DO NOTHING
   `,
   );
