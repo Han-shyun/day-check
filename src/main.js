@@ -2326,7 +2326,7 @@ function getSharedTodoById(todoId) {
   return null;
 }
 
-async function collabApiRequest(path, options = {}, { withCsrf = false } = {}) {
+async function collabApiRequest(path, options = {}, { withCsrf = false, retryOnCsrf = true } = {}) {
   const headers = {
     ...(options.headers || {}),
   };
@@ -2343,6 +2343,16 @@ async function collabApiRequest(path, options = {}, { withCsrf = false } = {}) {
     applyAuthState(null);
     updateAuthUI();
     render();
+  }
+
+  if (withCsrf && retryOnCsrf && response.status === 403) {
+    const payload = await safeReadJson(response.clone());
+    if (payload?.error === 'invalid_csrf_token') {
+      await checkAuth();
+      if (isServerSync && authUser) {
+        return collabApiRequest(path, options, { withCsrf, retryOnCsrf: false });
+      }
+    }
   }
 
   return response;
@@ -2496,6 +2506,15 @@ async function savePublicIdToServer(inputPublicId) {
     return false;
   }
   if (!response.ok) {
+    const payload = await safeReadJson(response);
+    if (response.status === 401) {
+      showToast('로그인이 만료되었습니다. 다시 로그인해 주세요.', 'error');
+      return false;
+    }
+    if (payload?.error === 'invalid_csrf_token') {
+      showToast('보안 토큰이 갱신되었습니다. 다시 저장해 주세요.', 'error');
+      return false;
+    }
     showToast('고유ID 저장에 실패했습니다.', 'error');
     return false;
   }

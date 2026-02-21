@@ -513,6 +513,12 @@ async function ensureColumnIfMissing(tableName, columnName, columnDef) {
 
 async function ensureUsersSchema() {
   const created = [];
+  if (await ensureColumnIfMissing('users', 'created_at', 'TEXT')) {
+    created.push('created_at');
+  }
+  if (await ensureColumnIfMissing('users', 'updated_at', 'TEXT')) {
+    created.push('updated_at');
+  }
   if (await ensureColumnIfMissing('users', 'kakao_id', 'TEXT')) {
     created.push('kakao_id');
   }
@@ -536,6 +542,9 @@ async function ensureUsersSchema() {
       // safe fallback for older sqlite versions/corrupted state
     }
   }
+
+  await run("UPDATE users SET created_at = COALESCE(created_at, datetime('now'))");
+  await run("UPDATE users SET updated_at = COALESCE(updated_at, datetime('now'))");
 
   const columns = await all(`PRAGMA table_info(users)`);
   const legacyNaverIdColumn = columns.find((row) => row && row.name === 'naver_id');
@@ -1464,8 +1473,17 @@ async function authSessionMiddleware(req, res, next) {
     }
 
     session = await refreshKakaoAccessTokenIfNeeded(session);
+    if (!session.csrfToken) {
+      session.csrfToken = generateRandomToken();
+    }
     session.expiresAt = Date.now() + SESSION_TTL_MS;
     await saveSessionRecord(sessionId, session);
+    if ((req.cookies?.[CSRF_COOKIE] || '') !== session.csrfToken) {
+      res.cookie(CSRF_COOKIE, session.csrfToken, csrfCookieSettings(process.env.NODE_ENV === 'production'));
+      if (req.cookies) {
+        req.cookies[CSRF_COOKIE] = session.csrfToken;
+      }
+    }
     res.locals.userSession = {
       ...session,
       sessionId,
