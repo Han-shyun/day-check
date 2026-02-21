@@ -2515,6 +2515,18 @@ async function savePublicIdToServer(inputPublicId) {
       showToast('보안 토큰이 갱신되었습니다. 다시 저장해 주세요.', 'error');
       return false;
     }
+    if (payload?.error === 'invalid_payload') {
+      showToast('고유ID 형식을 확인해 주세요. (4~20자, 소문자/숫자/_)', 'error');
+      return false;
+    }
+    if (response.status === 404 || payload?.error === 'not_found') {
+      showToast('사용자 정보를 찾을 수 없습니다. 다시 로그인해 주세요.', 'error');
+      return false;
+    }
+    if (response.status >= 500 || payload?.error === 'internal_server_error') {
+      showToast('서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.', 'error');
+      return false;
+    }
     showToast('고유ID 저장에 실패했습니다.', 'error');
     return false;
   }

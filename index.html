@@ -15,7 +15,7 @@
     <title>Day Check</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
-    <link rel="stylesheet" href="/src/style.css?v=day-check-spa-20260220c" />
+    <link rel="stylesheet" href="/src/style.css?v=day-check-spa-20260221a" />
   </head>
   <body>
     <main class="app-shell">
@@ -45,6 +45,14 @@
           <div id="profileEditor" class="inline-category-create hidden profile-editor">
             <input id="profileNicknameInput" type="text" maxlength="20" placeholder="별명 (예: 지훈)" />
             <input id="profileHonorificInput" type="text" maxlength="12" placeholder="호칭 (예: 님, 매니저님)" />
+            <input
+              id="profilePublicIdInput"
+              type="text"
+              maxlength="20"
+              placeholder="고유ID (예: team_alpha)"
+              autocomplete="off"
+            />
+            <p id="profilePublicIdHint" class="muted profile-publicid-hint">로그인 후 설정할 수 있습니다.</p>
             <button id="saveProfileBtn" type="button">저장</button>
             <button id="cancelProfileBtn" type="button">취소</button>
           </div>
@@ -52,10 +60,10 @@
       </header>
 
       <nav class="app-tabs card" aria-label="주요 화면">
-        <a href="#/home" class="app-tab is-active" data-route-link="home" aria-current="page">Home</a>
-        <a href="#/buckets" class="app-tab" data-route-link="buckets">Buckets</a>
-        <a href="#/calendar" class="app-tab" data-route-link="calendar">Calendar</a>
-        <a href="#/report" class="app-tab" data-route-link="report">Report</a>
+        <a href="#/home" class="app-tab is-active" data-route-link="home" aria-current="page">홈</a>
+        <a href="#/buckets" class="app-tab" data-route-link="buckets">버킷</a>
+        <a href="#/calendar" class="app-tab" data-route-link="calendar">캘린더</a>
+        <a href="#/report" class="app-tab" data-route-link="report">리포트</a>
       </nav>
 
       <section id="routeOutlet" class="route-outlet" aria-live="polite" data-route="home">
@@ -63,18 +71,9 @@
           <section class="quick-add card" aria-label="빠른 입력">
             <div class="quick-add-head panel-head">
               <h2>빠른 입력</h2>
-              <button
-                id="toggleQuickAddBtn"
-                type="button"
-                class="ghost-btn"
-                aria-expanded="false"
-                aria-controls="quickAddForm"
-              >
-                펼치기
-              </button>
             </div>
             <p class="muted quick-add-hint">한 줄로 바로 입력하세요.</p>
-            <div id="quickAddBody" class="quick-add-body hidden">
+            <div id="quickAddBody" class="quick-add-body">
               <form id="quickAddForm">
                 <input id="quickInput" type="text" placeholder="한 줄 할 일 입력 (Enter)" maxlength="120" required />
                 <input id="dueDateInput" type="date" aria-label="마감일 선택" />
@@ -104,6 +103,41 @@
         </section>
 
         <section class="route-view" data-route-view="buckets" hidden>
+          <section id="collabPanel" class="card collab-panel" aria-label="버킷 공유">
+            <div class="collab-panel-head">
+              <h2>버킷 공유</h2>
+              <p id="collabProfileBadge" class="muted">로그인 후 공유 기능을 사용할 수 있습니다.</p>
+            </div>
+
+            <form id="collabInviteForm" class="collab-invite-form">
+              <select id="collabInviteBucketSelect" aria-label="공유할 버킷 선택"></select>
+              <input
+                id="collabInviteTargetInput"
+                type="text"
+                maxlength="20"
+                placeholder="상대 고유ID"
+                autocomplete="off"
+                disabled
+              />
+              <button type="submit">초대 보내기</button>
+            </form>
+
+            <div class="collab-grid">
+              <article>
+                <h3>받은 초대</h3>
+                <ul id="collabReceivedInvites" class="todo-list"></ul>
+              </article>
+              <article>
+                <h3>보낸 초대</h3>
+                <ul id="collabSentInvites" class="todo-list"></ul>
+              </article>
+              <article>
+                <h3>공유 멤버</h3>
+                <ul id="collabMembershipList" class="todo-list"></ul>
+              </article>
+            </div>
+          </section>
+
           <section class="card board-wrap" aria-label="버킷 보드">
             <div class="board-toolbar">
               <p class="muted board-toolbar-title">버킷 관리</p>
@@ -311,9 +345,33 @@
             class="todo-detail-input"
             rows="3"
             maxlength="1200"
-            placeholder="상세 내용 입력"
-            aria-label="상세 내용 입력"
+            placeholder="요약 설명 (선택)"
+            aria-label="요약 설명 입력"
           ></textarea>
+          <section class="todo-extra" aria-label="세부 할 일과 메모">
+            <div class="todo-subtask-composer">
+              <input
+                class="todo-subtask-input"
+                type="text"
+                maxlength="120"
+                placeholder="세부 할 일 추가"
+                aria-label="세부 할 일 추가"
+              />
+              <button class="todo-subtask-add" type="button">세부 추가</button>
+            </div>
+            <ul class="todo-subtask-list"></ul>
+            <div class="todo-memo-composer">
+              <textarea
+                class="todo-memo-input"
+                rows="2"
+                maxlength="1200"
+                placeholder="메모 추가 (Ctrl+Enter 저장)"
+                aria-label="메모 추가"
+              ></textarea>
+              <button class="todo-memo-add" type="button">메모 추가</button>
+            </div>
+            <ul class="todo-memo-list"></ul>
+          </section>
         </div>
         <div class="todo-controls">
           <select class="todo-category-select" aria-label="카테고리 선택"></select>
@@ -325,6 +383,6 @@
       </li>
     </template>
 
-    <script type="module" src="/src/app/bootstrap.js?v=day-check-spa-20260220c"></script>
+    <script type="module" src="/src/app/bootstrap.js?v=day-check-spa-20260221a"></script>
   </body>
 </html>

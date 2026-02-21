@@ -20,6 +20,13 @@ module.exports = {
         await handler(req, res, next);
       } catch (error) {
         if (error instanceof CollabError) {
+          console.warn(
+            '[collab]',
+            req.method,
+            req.originalUrl,
+            `-> ${error.status} ${error.error}`,
+            error.details || {},
+          );
           res.status(error.status).json({
             error: error.error,
             ...(error.details || {}),
