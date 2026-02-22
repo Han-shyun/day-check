@@ -2075,7 +2075,9 @@ function getCookie(name) {
 function normalizePublicIdInput(value) {
   return String(value || '')
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/^@+/, '')
+    .replace(/[\s-]+/g, '_');
 }
 
 function isValidPublicId(value) {
@@ -2598,7 +2600,7 @@ function updateAuthUI() {
       profilePublicIdInput.value = normalizePublicIdInput(collabProfile.publicId || authUser.publicId || '');
     }
     if (profilePublicIdHint) {
-      profilePublicIdHint.textContent = '형식: a-z, 0-9, _ / 4~20자';
+      profilePublicIdHint.textContent = '형식: a-z, 0-9, _ / 4~20자 ( @, -, 공백은 자동 변환 )';
     }
   } else {
     authStatusEl.textContent = '로그인 필요';

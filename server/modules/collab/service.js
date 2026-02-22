@@ -37,7 +37,10 @@ function normalizeText(value, maxLength) {
 }
 
 function normalizePublicId(value) {
-  return normalizeText(value, 20).toLowerCase();
+  return normalizeText(value, 20)
+    .toLowerCase()
+    .replace(/^@+/, '')
+    .replace(/[\s-]+/g, '_');
 }
 
 function normalizeBucketKey(value) {
