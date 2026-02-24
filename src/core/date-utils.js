@@ -8,7 +8,25 @@ export function parseIsoDate(isoText) {
   if (!isoText) {
     return '';
   }
-  return String(isoText).slice(0, 10);
+
+  const normalized = String(isoText).trim();
+  if (!normalized) {
+    return '';
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+  if (/^\d{8}$/.test(normalized)) {
+    return `${normalized.slice(0, 4)}-${normalized.slice(4, 6)}-${normalized.slice(6, 8)}`;
+  }
+
+  const parsed = new Date(normalized);
+  if (!Number.isNaN(parsed.getTime())) {
+    return toLocalIsoDate(parsed);
+  }
+
+  const match = normalized.match(/(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : '';
 }
 
 export function clampCalendarRangeEnd(startDate, endDate) {

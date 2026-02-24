@@ -434,3 +434,196 @@
 - 헤더 버튼 밀도 완화(액션 메뉴화)
 - 버킷/세부프로젝트 조작 피드백 고도화(토스트/가이드)
 - 레거시 category 필드 완전 제거 여부 결정 및 마이그레이션
+
+## 추가 작업 내역 (2026-02-20 / 협업 기능 + 고유ID + 의견 공유 + 플랫 디자인)
+
+### 무엇을 변경했는지
+1. 협업 백엔드 구현 완료
+- `server/modules/collab/*` stub 제거 후 실제 구현
+- `/api/collab` 라우터 전체 추가
+- 권한 정책(owner/member), 접근제어, optimistic concurrency(`revision`) 반영
+- `GET /api/auth/me` 응답에 `user.publicId` 추가
+
+2. DB 스키마 확장
+- `users.public_id`, `users.public_id_normalized`, `users.public_id_updated_at`
+- 신규 테이블:
+  - `bucket_share_invites`
+  - `bucket_share_memberships`
+  - `shared_bucket_todos`
+  - `shared_todo_comments`
+- 관련 인덱스 추가 및 additive migration 적용
+
+3. 프론트 협업 UI 구현
+- 프로필 편집기에 고유ID 입력 필드 추가 (`profilePublicIdInput`)
+- 버킷 화면 상단에 공유 패널 추가
+  - 초대 발송
+  - 받은 초대 수락/거절
+  - 보낸 초대 취소
+  - 공유 멤버 제거/나가기
+- 버킷별 공유 작업 섹션 추가
+  - 공유 작업 생성/수정/완료/삭제
+  - 작성자 `@publicId` 식별 배지 표시
+  - 의견(코멘트) 토글/작성/삭제
+- 버킷 화면 활성 시 협업 데이터 폴링 동기화(6초 주기)
+
+4. 플랫 디자인 전면 적용
+- 전역 토큰을 플랫 톤으로 오버라이드
+- 카드/버튼/탭/캘린더/버킷 UI의 그림자/블러/translate hover 제거
+- 사각형 기반(6~8px) 경계선 중심 스타일로 통일
+- 모바일 하단 탭 블러 제거
+
+### 검증
+1. 빌드 검증
+- `npm run build` 성공
+
+2. 통합 API 시나리오 검증(로컬 스크립트)
+- A/B 계정 생성 → 고유ID 설정 → 초대/수락 → 공유할일 생성/수정 → 코멘트 작성
+- 작성자 식별(`comment.author.publicId`) 확인
+
+3. 서버 반영
+- 1단계(백엔드) 배포 후 `http://127.0.0.1:4173/api/health` on server: `{"status":"ok"}`
+- 2~3단계(프론트+디자인) 배포 후 동일 헬스체크: `{"status":"ok"}`
+
+### 주요 변경 파일
+- `server.js`
+- `server/app.js`
+- `server/modules/auth/router.js`
+- `server/modules/collab/router.js`
+- `server/modules/collab/service.js`
+- `server/modules/collab/repository.js`
+- `server/modules/collab/policy.js`
+- `src/main.js`
+- `src/style.css`
+- `index.html`
+- `README.md`
+- `WORK_STATUS.md`
+- `docs/DESIGN_HANDOFF.md`
+
+## 추가 작업 내역 (2026-02-23 / T-001, T-002 착수 반영)
+
+### 무엇을 변경했는지
+1. T-001 서버 암호화 키 강제
+- `server.js`에 `validateRequiredSecurityConfig()` 추가
+- `SESSION_ENCRYPTION_KEY` 미설정 시 `missing_SESSION_ENCRYPTION_KEY` 예외로 서버 시작 차단
+- `SESSION_ENCRYPTION_KEY` 형식 무효 시 `invalid_SESSION_ENCRYPTION_KEY` 예외로 서버 시작 차단
+- 검증 시점을 `startServer()` 초기(DB 초기화 이전)로 이동
+- `.env.example`에 `SESSION_ENCRYPTION_KEY` 필수/형식 주석 강화
+
+2. T-002 깨진 문자열 오탐 수정 + 피드백
+- `src/main.js`, `server.js`의 `hasBrokenText()` 규칙을 동일하게 변경
+- `?` + 임의 문자 1~3자 정규식 차단 규칙 제거
+- `scripts/check-text.js`의 `MOJIBAKE_MARKERS` 기반 판정으로 축소
+- 프론트 정규화 경로(`loadStateFromLocal`, `normalizeBucketLabels`, `normalizeProjectLanes`, `normalizeCategoryState`)에서 필터링 시 `showToast(..., 'error')` 피드백 추가
+
+3. 태스크 문서 반영
+- `PROJECT_TASKS.md`에서 `T-001`, `T-002`를 완료 상태로 표시하고 완료 목록에 추가
+
+### 현재 상태
+- T-001/T-002 요구사항 코드 반영 완료
+- 서버/프론트 손상 문자열 판정 로직이 동기화됨
+
+### 남은 이슈
+1. 시작/동기화 시 손상 데이터가 많으면 토스트가 다수 발생할 수 있음
+2. T-003 이후 공통 API 에러 처리 개선 시 토스트 정책 재조정 필요
+
+## 추가 작업 내역 (2026-02-23 / T-003~T-007, T-018, T-021 반영)
+
+### 무엇을 변경했는지
+1. T-003 `apiRequest` 에러 처리 표준화
+- `src/main.js`에 `ApiRequestError` 생성 로직 추가
+- `apiRequest()`에서 4xx/5xx 응답 시 표준 에러 throw + 전역 에러 토스트 출력
+- 토스트 중복 방지 쿨다운(`API_ERROR_TOAST_COOLDOWN_MS`) 추가
+- 백그라운드/예외 케이스는 `allowHttpStatus`, `suppressErrorToast` 옵션으로 제어
+
+2. T-004 세션 절대 만료 추가
+- `server.js`에 `SESSION_ABSOLUTE_TTL_MS`(기본 30일) 도입
+- `authSessionMiddleware`에서 `createdAt` 기준 절대 만료 검증 추가
+- 절대 만료 시 `session_absolute_expired` 보안 이벤트로 기록
+
+3. T-005 버전 충돌(409) 사용자 선택 UI
+- `src/main.js`에 충돌 처리 함수(`handleVersionConflict`) 추가
+- 충돌 시 로컬/원격 스냅샷을 `CONFLICT_BACKUP_STORAGE_KEY`에 백업
+- 사용자 선택:
+  - 확인: 로컬 변경 유지 후 재저장 시도
+  - 취소: 서버 최신 상태 적용
+
+4. T-006 협업 API Rate Limit
+- `server/modules/collab/router.js`에 write 엔드포인트 공통 제한 추가
+- 기본값: 분당 10회 (`writeWindowMs=60000`, `writeLimit=10`)
+
+5. T-007 보안 이벤트 로그 유실 방지
+- `server.js` 로그 기록 시 실패 `console.error` 출력 추가
+- 로그 로테이션(`SECURITY_EVENT_LOG_MAX_BYTES`, 기본 10MB, `.1` 백업) 추가
+
+6. T-018 CI/CD SSH 타임아웃/재시도
+- `.github/workflows/deploy-server.yml`에서
+  - `ssh-keyscan` 타임아웃 8초 -> 30초
+  - `ssh handshake` connect timeout 8초 -> 30초
+  - keyscan/handshake 각각 3회 재시도 로직 추가
+
+7. T-021 SQLite WAL 모드
+- `server.js` DB 초기화 시
+  - `PRAGMA foreign_keys = ON`
+  - `PRAGMA journal_mode = WAL`
+  적용
+
+### 현재 상태
+- T-001~T-007, T-018, T-021 코드 반영 완료
+- `PROJECT_TASKS.md` 완료 상태 동기화 완료
+
+### 남은 이슈
+1. 충돌 처리(T-005)는 현재 "사용자 선택 UI" 방식이며, 자동 병합(필드 단위 merge)은 아직 미구현
+2. T-008 이후 구조 리팩토링(전역 상태 통합) 전까지는 `src/main.js` 결합도가 높음
+
+## 추가 작업 내역 (2026-02-24 / T-008~T-022 잔여 일괄 완료)
+
+### 무엇을 변경했는지
+1. 프론트 상태/동기화 구조(`src/main.js`)
+- `appState = { data, runtime, config }` 기준으로 런타임 상태 통합 유지/보강
+- `/api/meta` 선로딩 후 버킷 기본값/폴링 주기/공휴일 TTL 반영
+- 상태/협업 폴링을 가시성 기반 active/hidden 가변 주기로 전환
+- 협업 동기화를 `GET /api/collab/snapshot` 단일 배치 호출 경로로 전환
+- 공휴일 캐시를 `{ data, expiresAt }` 구조로 변경하고 TTL 만료/실패 시 stale 유지
+- 버킷 헤더 보조 액션을 `...` 메뉴로 통합(모바일/좁은 폭 자동 메뉴화)
+- 전역 에러 경계(`window.error`, `unhandledrejection`) + fail-safe UI(재시도/새로고침) 추가
+- 레거시 category 필드 마이그레이션 보정 유지 후 저장/동기화 페이로드에서 제거
+- 타임존 처리 보강: `parseIsoDate`를 로컬 변환 기반으로 교체
+
+2. 서버(`server.js`, `server/modules/collab/*`)
+- `GET /api/meta` 유지/확장: 버킷 기본값, poll 주기, holiday TTL, migration version 노출
+- `GET /api/collab/snapshot` + `service.getSnapshot` 추가 유지(하위 엔드포인트 호환 유지)
+- 공휴일 공급자 정책 확정:
+  - 1순위: 공공데이터포털(`HOLIDAY_API_PROVIDER=public_data_portal`)
+  - 실패/키 누락 시 Google ICS(`HOLIDAY_FEED_URL`) 폴백
+  - 응답 메타(`source`, `provider`, `fallback`, `reason`) 포함
+- `normalizeState`에서 legacy `category/categoryId`를 `projectLaneId`로 매핑 후 제거
+- DB 마이그레이션 구조 개편:
+  - `db_migrations` 버전 기록
+  - migration step 트랜잭션(`BEGIN IMMEDIATE`~`COMMIT/ROLLBACK`)
+  - idempotent 적용 + `/api/meta.schema.latestMigrationVersion` 반영
+
+3. 공통/문서/설정
+- `.env.example`에 신규 환경변수 추가:
+  - `HOLIDAY_API_PROVIDER`, `HOLIDAY_API_SERVICE_KEY`, `HOLIDAY_API_BASE_URL`
+  - `HOLIDAY_CLIENT_CACHE_TTL_MS`
+  - `POLL_STATE_ACTIVE_MS`, `POLL_STATE_HIDDEN_MS`, `POLL_COLLAB_ACTIVE_MS`, `POLL_COLLAB_HIDDEN_MS`
+- `README.md`에 신규 API(`GET /api/meta`, `GET /api/collab/snapshot`) 및 상태 계약/환경변수 업데이트
+- `PROJECT_TASKS.md`에서 `T-008~T-022` 완료 표시/완료 목록 반영
+
+4. 자동화 테스트 도입(`vitest` + `supertest`)
+- `tests/server-core.test.js`: `/api/auth/me` 비인증 응답, `normalizeState` 이관, `db_migrations` idempotent, 보안 로그 rotate 회귀검증
+- `tests/api-request.test.js`: `allowHttpStatus`, throw, 토스트 suppress 분기 검증
+- `tests/date-utils.test.js`: 로컬 타임존 변환 기반 날짜 유틸 검증
+
+### 현재 상태
+- `T-008`부터 `T-022`까지 계획된 잔여 항목을 코드/문서 기준으로 모두 반영 완료
+- 프론트/서버 빌드 및 자동화 테스트 스크립트 기준 통과 상태
+
+### 검증 결과
+1. `npm run check:text` 통과
+2. `npm run build` 통과
+3. `npm run test:run` 통과
+
+### 남은 이슈 / 리스크
+1. 실제 운영 환경(공공데이터포털 실키, 카카오 OAuth 왕복, 배포 인프라)에서 E2E 검증은 별도 필요
+2. `NODE_ENV=production`이 `.env`에 있을 때 Vite 경고가 출력되므로 dev/build 분리 운영 권장

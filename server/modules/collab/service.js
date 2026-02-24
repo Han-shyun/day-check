@@ -335,6 +335,83 @@ function createCollabService(options = {}) {
         shareSettings: shareSettingsResponse,
       };
     },
+    async getSnapshot(actorUserId, options = {}) {
+      const summary = await this.getSummary(actorUserId);
+      const contexts = [];
+      const contextKeys = new Set();
+      const todosByContext = {};
+      const commentsByTodo = {};
+      const todoContextById = new Map();
+      const normalizedCommentTodoIds = Array.isArray(options.commentTodoIds)
+        ? options.commentTodoIds
+          .map((id) => normalizeText(id, 120))
+          .filter(Boolean)
+        : [];
+
+      const addContext = (ownerUserId, bucketKey) => {
+        const owner = Number(ownerUserId);
+        const bucket = normalizeBucketKey(bucketKey);
+        if (!Number.isInteger(owner) || owner <= 0 || !BUCKET_KEYS.has(bucket)) {
+          return;
+        }
+        const key = `${owner}:${bucket}`;
+        if (contextKeys.has(key)) {
+          return;
+        }
+        contextKeys.add(key);
+        contexts.push({
+          key,
+          ownerUserId: owner,
+          bucketKey: bucket,
+        });
+      };
+
+      const owned = Array.isArray(summary?.ownedBuckets) ? summary.ownedBuckets : [];
+      owned.forEach((entry) => {
+        if (!entry || entry.shareEnabled !== true) {
+          return;
+        }
+        addContext(entry.ownerUserId, entry.bucketKey);
+      });
+
+      const joined = Array.isArray(summary?.joinedBuckets) ? summary.joinedBuckets : [];
+      joined.forEach((entry) => {
+        addContext(entry?.ownerUserId, entry?.bucketKey);
+      });
+
+      await Promise.all(
+        contexts.map(async (context) => {
+          const todos = await repository.listSharedTodos({
+            ownerUserId: context.ownerUserId,
+            bucketKey: context.bucketKey,
+          });
+          todosByContext[context.key] = todos;
+          todos.forEach((todo) => {
+            if (todo?.id) {
+              todoContextById.set(String(todo.id), context);
+            }
+          });
+        }),
+      );
+
+      const commentTodoIds = normalizedCommentTodoIds.filter((todoId) => todoContextById.has(todoId));
+      await Promise.all(
+        commentTodoIds.map(async (todoId) => {
+          const context = todoContextById.get(todoId);
+          if (!context) {
+            return;
+          }
+          await ensureBucketAccess(repository, actorUserId, context.ownerUserId, context.bucketKey);
+          commentsByTodo[todoId] = await repository.listCommentsByTodo(todoId);
+        }),
+      );
+
+      return {
+        summary,
+        todosByContext,
+        commentsByTodo,
+      };
+    },
     async setPublicId(actorUserId, payload = {}) {
       const publicId = normalizePublicId(payload.publicId);
       if (!PUBLIC_ID_PATTERN.test(publicId)) {

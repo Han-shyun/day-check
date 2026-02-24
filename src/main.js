@@ -11,6 +11,7 @@
   startOfWeek,
   toLocalIsoDate,
 } from './core/date-utils.js';
+import { createApiRequestError as createCoreApiRequestError, performApiRequest } from './core/api-request.js';
 import { APP_ROUTES, createRouter, ROUTE_STORAGE_KEY } from './app/router.js';
 import { createTodoUi } from './features/todo/ui.js';
 import { createBucketUi } from './features/bucket/ui.js';
@@ -20,7 +21,6 @@ import { createAuthUi } from './features/auth/ui.js';
 const TODO_STORAGE_KEY = 'day-check.main.todos.v4';
 const DONE_STORAGE_KEY = 'day-check.main.doneLog.v1';
 const CALENDAR_STORAGE_KEY = 'day-check.main.calendarItems.v1';
-const CATEGORY_STORAGE_KEY = 'day-check.main.categories.v1';
 const BUCKET_LABELS_STORAGE_KEY = 'day-check.main.bucketLabels.v1';
 const BUCKET_ORDER_STORAGE_KEY = 'day-check.main.bucketOrder.v1';
 const BUCKET_VISIBILITY_STORAGE_KEY = 'day-check.main.bucketVisibility.v1';
@@ -30,10 +30,15 @@ const LEGACY_TODO_KEYS = ['day-check.main.todos.v3', 'day-check.main.todos.v2'];
 
 const API_BASE = '/api';
 const SYNC_DEBOUNCE_MS = 500;
-const STATE_POLL_INTERVAL_MS = 4000;
-const COLLAB_POLL_INTERVAL_MS = 6000;
+const STATE_POLL_ACTIVE_INTERVAL_MS_DEFAULT = 4000;
+const STATE_POLL_HIDDEN_INTERVAL_MS_DEFAULT = 20000;
+const COLLAB_POLL_ACTIVE_INTERVAL_MS_DEFAULT = 6000;
+const COLLAB_POLL_HIDDEN_INTERVAL_MS_DEFAULT = 30000;
+const HOLIDAY_CACHE_TTL_MS_DEFAULT = 24 * 60 * 60 * 1000;
+const HOLIDAY_STALE_RETRY_MS = 5 * 60 * 1000;
+const API_ERROR_TOAST_COOLDOWN_MS = 4000;
+const CONFLICT_BACKUP_STORAGE_KEY = 'day-check.state.conflict.backup.v1';
 
-const defaultCategories = [{ id: 'uncategorized', name: '미분류' }];
 const BUCKET_TOTAL = 8;
 const defaultBucketLabels = Array.from({ length: BUCKET_TOTAL }, (_, index) => [
   `bucket${index + 1}`,
@@ -56,7 +61,6 @@ const state = {
   todos: [],
   doneLog: [],
   calendarItems: [],
-  categories: [...defaultCategories],
   bucketLabels: { ...defaultBucketLabels },
   bucketOrder: [...buckets],
   bucketVisibility: { ...defaultBucketVisibility },
@@ -67,36 +71,65 @@ const state = {
   version: 0,
 };
 
-let isServerSync = false;
-let authUser = null;
-let pendingSync = false;
-let syncing = false;
-let syncTimer = null;
-let localDirty = false;
-let statePollTimer = null;
-let statePollInFlight = false;
-let statePollingEventsRegistered = false;
-let eventsRegistered = false;
-let columnResizeObserver = null;
-let toastHostEl = null;
-let calendarMode = 'note';
-let currentRoute = 'home';
-let appRouter = null;
-let routeTransitionTimer = null;
-let routeModules = {};
-let authView = null;
-let viewportClassRegistered = false;
-let collabProfile = {
-  publicId: '',
-  publicIdUpdatedAt: null,
+const appState = {
+  data: state,
+  runtime: {
+    isServerSync: false,
+    authUser: null,
+    pendingSync: false,
+    syncing: false,
+    syncTimer: null,
+    localDirty: false,
+    statePollTimer: null,
+    statePollInFlight: false,
+    statePollIntervalMs: 0,
+    statePollingEventsRegistered: false,
+    eventsRegistered: false,
+    columnResizeObserver: null,
+    toastHostEl: null,
+    calendarMode: 'note',
+    currentRoute: 'home',
+    appRouter: null,
+    routeTransitionTimer: null,
+    routeModules: {},
+    authView: null,
+    viewportClassRegistered: false,
+    collabProfile: {
+      publicId: '',
+      publicIdUpdatedAt: null,
+    },
+    collabSummary: null,
+    collabShareSettingsByBucket: {},
+    sharedTodosByContext: {},
+    sharedCommentsByTodo: {},
+    activeSharedContextByBucket: {},
+    collabPollTimer: null,
+    collabPollInFlight: false,
+    collabPollIntervalMs: 0,
+    lastApiErrorToastKey: '',
+    lastApiErrorToastAt: 0,
+    fatalErrorShown: false,
+    fatalErrorOverlayEl: null,
+    globalErrorHandlersRegistered: false,
+    bucketMenuHandlersRegistered: false,
+    activeBucketMenuButton: null,
+  },
+  config: {
+    poll: {
+      stateActiveMs: STATE_POLL_ACTIVE_INTERVAL_MS_DEFAULT,
+      stateHiddenMs: STATE_POLL_HIDDEN_INTERVAL_MS_DEFAULT,
+      collabActiveMs: COLLAB_POLL_ACTIVE_INTERVAL_MS_DEFAULT,
+      collabHiddenMs: COLLAB_POLL_HIDDEN_INTERVAL_MS_DEFAULT,
+    },
+    holidays: {
+      cacheTtlMs: HOLIDAY_CACHE_TTL_MS_DEFAULT,
+    },
+    metaLoaded: false,
+  },
 };
-let collabSummary = null;
-let collabShareSettingsByBucket = {};
-let sharedTodosByContext = {};
-let sharedCommentsByTodo = {};
-let activeSharedContextByBucket = {};
-let collabPollTimer = null;
-let collabPollInFlight = false;
+
+const runtime = appState.runtime;
+const config = appState.config;
 
 const routeOutletEl = document.getElementById('routeOutlet');
 const routeLinkEls = Array.from(document.querySelectorAll('[data-route-link]'));
@@ -190,6 +223,21 @@ const HOLIDAYS_BY_MONTH_DAY_FALLBACK = {
 };
 const HOLIDAYS_BY_YEAR = {};
 const HOLIDAYS_REQUEST = {};
+const MOJIBAKE_MARKERS = [
+  '\u003F\uAFA8',
+  '\u003F\uBA83',
+  '\u003F\uACD7',
+  '\u003F\uB181',
+  '\u6FE1\uC493',
+  '\u907A\uAFA8',
+  '\u79FB\uB301',
+  '\u8E30\uAFAA\uADA5',
+  '\u7337\u2466',
+];
+
+function findBrokenTextMarker(text) {
+  return MOJIBAKE_MARKERS.find((marker) => text.includes(marker)) || '';
+}
 
 function hasBrokenText(value) {
   const text = String(value || '');
@@ -199,7 +247,24 @@ function hasBrokenText(value) {
   if (/[\uFFFD]/u.test(text)) {
     return true;
   }
-  return /\?[^\s"'`<>()[\]{}=]{1,3}/u.test(text);
+  return Boolean(findBrokenTextMarker(text));
+}
+
+function showBrokenTextFilteredToast(context, value) {
+  const text = String(value || '');
+  if (!text) {
+    return;
+  }
+
+  const marker = findBrokenTextMarker(text);
+  if (marker) {
+    showToast(`${context}에서 깨진 문자열 패턴("${marker}")이 감지되어 제외했습니다.`, 'error');
+    return;
+  }
+
+  if (/[\uFFFD]/u.test(text)) {
+    showToast(`${context}에서 치환 문자(U+FFFD)가 감지되어 제외했습니다.`, 'error');
+  }
 }
 
 function getHolidayFallbackLabel(date) {
@@ -217,7 +282,7 @@ function getHolidayLabel(date) {
   const dateText = toLocalIsoDate(date);
   const fallback = getHolidayFallbackLabel(date);
 
-  return HOLIDAYS_BY_YEAR[year]?.[dateText] || fallback;
+  return HOLIDAYS_BY_YEAR[year]?.data?.[dateText] || fallback;
 }
 
 function normalizeHolidayMap(candidate) {
@@ -237,11 +302,17 @@ function normalizeHolidayMap(candidate) {
 
 function requestHolidayData(year) {
   const yearText = String(year);
-  if (HOLIDAYS_BY_YEAR[yearText] || HOLIDAYS_REQUEST[yearText]) {
-    return HOLIDAYS_REQUEST[yearText] || Promise.resolve(HOLIDAYS_BY_YEAR[yearText]);
+  const cached = HOLIDAYS_BY_YEAR[yearText];
+  if (HOLIDAYS_REQUEST[yearText]) {
+    return HOLIDAYS_REQUEST[yearText];
+  }
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.data || {});
   }
 
   const promise = (async () => {
+    const stale = cached?.data || {};
+    const staleRetryExpiresAt = Date.now() + HOLIDAY_STALE_RETRY_MS;
     try {
       const response = await fetch(`${API_BASE}/holidays?year=${encodeURIComponent(yearText)}`, {
         headers: {
@@ -250,17 +321,28 @@ function requestHolidayData(year) {
         cache: 'no-store',
       });
       if (!response.ok) {
-        HOLIDAYS_BY_YEAR[yearText] = {};
-        return {};
+        HOLIDAYS_BY_YEAR[yearText] = {
+          data: stale,
+          expiresAt: staleRetryExpiresAt,
+        };
+        return stale;
       }
 
       const payload = await response.json();
       const holidayMap = normalizeHolidayMap(payload?.holidays);
-      HOLIDAYS_BY_YEAR[yearText] = holidayMap;
-      return HOLIDAYS_BY_YEAR[yearText];
+      const ttlRaw = Number(payload?.clientCacheTtlMs || config.holidays.cacheTtlMs);
+      const ttlMs = Number.isFinite(ttlRaw) && ttlRaw > 0 ? ttlRaw : HOLIDAY_CACHE_TTL_MS_DEFAULT;
+      HOLIDAYS_BY_YEAR[yearText] = {
+        data: holidayMap,
+        expiresAt: Date.now() + ttlMs,
+      };
+      return holidayMap;
     } catch {
-      HOLIDAYS_BY_YEAR[yearText] = HOLIDAYS_BY_YEAR[yearText] || {};
-      return {};
+      HOLIDAYS_BY_YEAR[yearText] = {
+        data: stale,
+        expiresAt: staleRetryExpiresAt,
+      };
+      return stale;
     } finally {
       HOLIDAYS_REQUEST[yearText] = null;
     }
@@ -268,15 +350,24 @@ function requestHolidayData(year) {
 
   HOLIDAYS_REQUEST[yearText] = promise;
   promise.catch(() => {
-    HOLIDAYS_BY_YEAR[yearText] = HOLIDAYS_BY_YEAR[yearText] || {};
+    const stale = HOLIDAYS_BY_YEAR[yearText]?.data || {};
+    HOLIDAYS_BY_YEAR[yearText] = {
+      data: stale,
+      expiresAt: Date.now() + HOLIDAY_STALE_RETRY_MS,
+    };
   });
   return promise;
 }
 
 function ensureHolidayDataForYear(year) {
   const yearText = String(year);
-  if (HOLIDAYS_BY_YEAR[yearText] || HOLIDAYS_REQUEST[yearText]) {
-    return HOLIDAYS_REQUEST[yearText] || Promise.resolve(HOLIDAYS_BY_YEAR[yearText]);
+  if (HOLIDAYS_REQUEST[yearText]) {
+    return HOLIDAYS_REQUEST[yearText];
+  }
+
+  const cached = HOLIDAYS_BY_YEAR[yearText];
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cached.data || {});
   }
 
   const request = requestHolidayData(yearText);
@@ -338,7 +429,6 @@ function loadStateFromLocal() {
   const todos = safeJsonParse(TODO_STORAGE_KEY);
   const doneLog = safeJsonParse(DONE_STORAGE_KEY);
   const calendarItems = safeJsonParse(CALENDAR_STORAGE_KEY);
-  const categories = safeJsonParse(CATEGORY_STORAGE_KEY);
   const bucketLabels = safeJsonParse(BUCKET_LABELS_STORAGE_KEY);
   const bucketOrder = safeJsonParse(BUCKET_ORDER_STORAGE_KEY);
   const bucketVisibility = safeJsonParse(BUCKET_VISIBILITY_STORAGE_KEY);
@@ -361,29 +451,13 @@ function loadStateFromLocal() {
 
   state.doneLog = normalizeDoneLog(Array.isArray(doneLog) ? doneLog : []);
   state.calendarItems = normalizeCalendarItems(Array.isArray(calendarItems) ? calendarItems : []);
-
-  const categoriesFallback =
-    Array.isArray(categories) && categories.length > 0
-      ? categories.filter(
-          (category) =>
-            category &&
-            typeof category.id === 'string' &&
-            typeof category.name === 'string' &&
-            !hasBrokenText(category.name),
-        )
-      : [];
-
-  state.categories =
-    categoriesFallback.length > 0
-      ? categoriesFallback
-      : [...defaultCategories];
   state.bucketLabels = normalizeBucketLabels(bucketLabels);
   state.bucketOrder = normalizeBucketOrder(bucketOrder);
   state.bucketVisibility = normalizeBucketVisibility(bucketVisibility);
   state.projectLanes = normalizeProjectLanes(projectLanes);
   state.userProfile = normalizeUserProfile(userProfile);
 
-  ensureCategoryIntegrity();
+  ensureDataIntegrity();
   ensureDateInState();
 }
 
@@ -396,11 +470,14 @@ function normalizeTodos(todos) {
       details: normalizeTodoDetails(todo.details || todo.description || ''),
       subtasks: normalizeTodoSubtasks(todo.subtasks || todo.subTasks || []),
       memos: normalizeTodoMemos(todo.memos || todo.notes || []),
-      categoryId: todo.categoryId || todo.bucketId || todo.bucket || 'uncategorized',
       projectLaneId: typeof todo.projectLaneId === 'string' ? todo.projectLaneId : '',
       bucket: normalizeBucketIdOrDefault(todo.bucket, 'bucket4'),
       priority: Number(todo.priority || 2),
       dueDate: String(todo.dueDate || '').trim(),
+      legacyCategoryId:
+        typeof todo.categoryId === 'string' && todo.categoryId.trim() ? todo.categoryId.trim() : '',
+      legacyCategory:
+        typeof todo.category === 'string' && todo.category.trim() ? todo.category.trim() : '',
       createdAt: todo.createdAt || new Date().toISOString(),
     }))
     .filter((todo) => todo.title);
@@ -411,7 +488,11 @@ function normalizeBucketLabels(input = {}) {
   return buckets.reduce((acc, bucket) => {
     const rawValue = getBucketFieldValue(source, bucket);
     const raw = typeof rawValue === 'string' ? rawValue.trim() : '';
-    const safeLabel = raw && !hasBrokenText(raw) ? raw : '';
+    const isBroken = raw && hasBrokenText(raw);
+    if (isBroken) {
+      showBrokenTextFilteredToast('버킷 이름', raw);
+    }
+    const safeLabel = raw && !isBroken ? raw : '';
     acc[bucket] = safeLabel || defaultBucketLabels[bucket] || bucket;
     return acc;
   }, {});
@@ -445,7 +526,11 @@ function normalizeBucketVisibility(input = {}) {
 
 function normalizeProjectLaneName(raw) {
   const normalized = normalizeBucketLabel(raw).slice(0, 30);
-  return hasBrokenText(normalized) ? '' : normalized;
+  if (normalized && hasBrokenText(normalized)) {
+    showBrokenTextFilteredToast('세부 프로젝트 이름', normalized);
+    return '';
+  }
+  return normalized;
 }
 
 function normalizeProjectLanes(input = []) {
@@ -479,10 +564,6 @@ function normalizeProjectLanes(input = []) {
       return;
     }
 
-    const categoryId =
-      typeof item.categoryId === 'string' && item.categoryId.trim()
-        ? item.categoryId.trim()
-        : '';
     const width = Number(item.width || 0);
     const height = Number(item.height || 0);
 
@@ -491,7 +572,6 @@ function normalizeProjectLanes(input = []) {
       id,
       name,
       bucket,
-      categoryId,
       width: Number.isFinite(width) && width >= 220 ? Math.round(width) : 0,
       height: Number.isFinite(height) && height >= 220 ? Math.round(height) : 0,
     });
@@ -509,11 +589,14 @@ function normalizeDoneLog(doneLog) {
       details: normalizeTodoDetails(item.details || item.description || ''),
       subtasks: normalizeTodoSubtasks(item.subtasks || item.subTasks || []),
       memos: normalizeTodoMemos(item.memos || item.notes || []),
-      categoryId: item.categoryId || 'uncategorized',
       projectLaneId: typeof item.projectLaneId === 'string' ? item.projectLaneId : '',
       bucket: normalizeBucketIdOrDefault(item.bucket, 'bucket4'),
       priority: Number(item.priority || 2),
       dueDate: String(item.dueDate || ''),
+      legacyCategoryId:
+        typeof item.categoryId === 'string' && item.categoryId.trim() ? item.categoryId.trim() : '',
+      legacyCategory:
+        typeof item.category === 'string' && item.category.trim() ? item.category.trim() : '',
       createdAt: item.createdAt || new Date().toISOString(),
       completedAt: item.completedAt || new Date().toISOString(),
     }))
@@ -545,30 +628,6 @@ function normalizeUserProfile(input = {}) {
   };
 }
 
-function normalizeCategoryState(input) {
-  const categories =
-    Array.isArray(input)
-      ? input.filter(
-          (item) =>
-            item &&
-            typeof item.id === 'string' &&
-            typeof item.name === 'string' &&
-            !hasBrokenText(item.name),
-        )
-      : [];
-
-  const fixed =
-    categories.length > 0
-      ? categories
-      : [...defaultCategories];
-
-  if (!fixed.some((item) => item.id === 'uncategorized')) {
-    fixed.unshift({ id: 'uncategorized', name: '미분류' });
-  }
-
-  return fixed;
-}
-
 function normalizeStateFromServer(payload) {
   return {
     todos: normalizeTodos(payload?.todos || []),
@@ -578,7 +637,6 @@ function normalizeStateFromServer(payload) {
     bucketOrder: normalizeBucketOrder(payload?.bucketOrder || []),
     bucketVisibility: normalizeBucketVisibility(payload?.bucketVisibility || {}),
     projectLanes: normalizeProjectLanes(payload?.projectLanes || []),
-    categories: normalizeCategoryState(payload?.categories || []),
     userProfile: normalizeUserProfile(payload?.userProfile || {}),
     currentMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
     selectedDate: state.selectedDate || toLocalIsoDate(new Date()),
@@ -597,12 +655,11 @@ function applyServerStateSnapshot(payload, version, options = {}) {
   state.bucketOrder = normalizeBucketOrder(merged.bucketOrder);
   state.bucketVisibility = normalizeBucketVisibility(merged.bucketVisibility);
   state.projectLanes = normalizeProjectLanes(merged.projectLanes);
-  state.categories = normalizeCategoryState(merged.categories);
   state.userProfile = normalizeUserProfile(merged.userProfile || state.userProfile);
   state.version = Number(version || merged.version || state.version || 0);
 
-  ensureCategoryIntegrity();
-  localDirty = false;
+  ensureDataIntegrity();
+  runtime.localDirty = false;
 
   if (shouldPersist) {
     saveLocalState();
@@ -634,7 +691,6 @@ function hasStoredData(payload) {
     (Array.isArray(payload.todos) && payload.todos.length > 0) ||
     (Array.isArray(payload.doneLog) && payload.doneLog.length > 0) ||
     (Array.isArray(payload.calendarItems) && payload.calendarItems.length > 0) ||
-    (Array.isArray(payload.categories) && payload.categories.length > 1) ||
     hasCustomBucketLabels ||
     hasCustomBucketOrder ||
     hasCustomBucketVisibility ||
@@ -647,7 +703,6 @@ function saveLocalState() {
   localStorage.setItem(TODO_STORAGE_KEY, JSON.stringify(state.todos));
   localStorage.setItem(DONE_STORAGE_KEY, JSON.stringify(state.doneLog));
   localStorage.setItem(CALENDAR_STORAGE_KEY, JSON.stringify(state.calendarItems));
-  localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(state.categories));
   localStorage.setItem(BUCKET_LABELS_STORAGE_KEY, JSON.stringify(state.bucketLabels));
   localStorage.setItem(BUCKET_ORDER_STORAGE_KEY, JSON.stringify(state.bucketOrder));
   localStorage.setItem(BUCKET_VISIBILITY_STORAGE_KEY, JSON.stringify(state.bucketVisibility));
@@ -655,22 +710,8 @@ function saveLocalState() {
   localStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(state.userProfile));
 }
 
-function ensureCategoryIntegrity() {
-  if (state.categories.length === 0) {
-    state.categories = [...defaultCategories];
-  }
-
-  if (!state.categories.some((item) => item.id === 'uncategorized')) {
-    state.categories.unshift({ id: 'uncategorized', name: '미분류' });
-  }
-
+function ensureDataIntegrity() {
   ensureProjectLaneIntegrity();
-
-  const ids = new Set(state.categories.map((item) => item.id));
-  state.todos = state.todos.map((todo) => ({
-    ...todo,
-    categoryId: ids.has(todo.categoryId) ? todo.categoryId : 'uncategorized',
-  }));
 }
 
 function getProjectLanesByBucket(bucket) {
@@ -681,11 +722,10 @@ function ensureProjectLaneIntegrity() {
   state.projectLanes = normalizeProjectLanes(state.projectLanes);
   const laneIds = new Set(state.projectLanes.map((lane) => lane.id));
   const laneById = new Map(state.projectLanes.map((lane) => [lane.id, lane]));
-  const legacyCategoryToLaneId = new Map(
-    state.projectLanes
-      .filter((lane) => typeof lane.categoryId === 'string' && lane.categoryId)
-      .map((lane) => [lane.categoryId, lane.id]),
-  );
+  const laneNameByBucket = new Map();
+  state.projectLanes.forEach((lane) => {
+    laneNameByBucket.set(`${lane.bucket}:${String(lane.name).toLowerCase()}`, lane.id);
+  });
 
   const resolveLaneId = (entry) => {
     const current = typeof entry.projectLaneId === 'string' ? entry.projectLaneId : '';
@@ -695,18 +735,28 @@ function ensureProjectLaneIntegrity() {
         return current;
       }
     }
-    const legacy = legacyCategoryToLaneId.get(entry.categoryId || '');
-    if (legacy && laneIds.has(legacy)) {
-      const lane = laneById.get(legacy);
-      if (lane && lane.bucket === entry.bucket) {
-        return legacy;
+
+    const legacyCandidates = [
+      entry.legacyCategoryId,
+      entry.legacyCategory,
+      entry.categoryId,
+      entry.category,
+    ]
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter(Boolean);
+
+    for (const legacyValue of legacyCandidates) {
+      if (laneIds.has(legacyValue)) {
+        const lane = laneById.get(legacyValue);
+        if (lane && lane.bucket === entry.bucket) {
+          return lane.id;
+        }
       }
-    }
-    const sameBucketLane = state.projectLanes.find(
-      (lane) => lane.bucket === entry.bucket && lane.name === entry.categoryId,
-    );
-    if (sameBucketLane) {
-      return sameBucketLane.id;
+
+      const laneId = laneNameByBucket.get(`${entry.bucket}:${legacyValue.toLowerCase()}`);
+      if (laneId && laneIds.has(laneId)) {
+        return laneId;
+      }
     }
     return '';
   };
@@ -719,15 +769,35 @@ function ensureProjectLaneIntegrity() {
     return resolveLaneId({ ...entry, bucket });
   };
 
-  state.todos = state.todos.map((todo) => ({
-    ...todo,
-    projectLaneId: mapLane(todo),
-  }));
+  state.todos = state.todos.map((todo) => {
+    const mappedLane = mapLane(todo);
+    const {
+      legacyCategoryId,
+      legacyCategory,
+      categoryId,
+      category,
+      ...rest
+    } = todo;
+    return {
+      ...rest,
+      projectLaneId: mappedLane,
+    };
+  });
 
-  state.doneLog = state.doneLog.map((item) => ({
-    ...item,
-    projectLaneId: mapLane(item),
-  }));
+  state.doneLog = state.doneLog.map((item) => {
+    const mappedLane = mapLane(item);
+    const {
+      legacyCategoryId,
+      legacyCategory,
+      categoryId,
+      category,
+      ...rest
+    } = item;
+    return {
+      ...rest,
+      projectLaneId: mappedLane,
+    };
+  });
 }
 
 function addProjectLane(rawName, bucket = 'bucket2') {
@@ -750,7 +820,6 @@ function addProjectLane(rawName, bucket = 'bucket2') {
     id: crypto.randomUUID(),
     name,
     bucket,
-    categoryId: '',
     width: 0,
     height: 0,
   });
@@ -1014,9 +1083,9 @@ function syncBucketOrderFromDom() {
 }
 
 function registerBucketResizeObserver() {
-  if (columnResizeObserver) {
-    columnResizeObserver.disconnect();
-    columnResizeObserver = null;
+  if (runtime.columnResizeObserver) {
+    runtime.columnResizeObserver.disconnect();
+    runtime.columnResizeObserver = null;
   }
 }
 
@@ -1026,8 +1095,8 @@ function renderProjectLaneColumns() {
   }
 
   boardEl.querySelectorAll('.column[data-project-lane-id]').forEach((column) => {
-    if (columnResizeObserver) {
-      columnResizeObserver.unobserve(column);
+    if (runtime.columnResizeObserver) {
+      runtime.columnResizeObserver.unobserve(column);
     }
     column.remove();
   });
@@ -1256,13 +1325,13 @@ function registerBucketLaneControls() {
 
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
-    addBtn.className = 'column-remove-btn bucket-lane-add-btn';
+    addBtn.className = 'column-remove-btn bucket-lane-add-btn bucket-header-action';
     addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 세부 추가`);
     addBtn.setAttribute('aria-expanded', 'false');
     addBtn.setAttribute('aria-pressed', 'false');
     addBtn.textContent = '+';
     const laneCreate = document.createElement('div');
-    laneCreate.className = 'inline-category-create hidden bucket-lane-create';
+    laneCreate.className = 'inline-lane-create hidden bucket-lane-create';
     const laneNameInput = document.createElement('input');
     laneNameInput.type = 'text';
     laneNameInput.maxLength = '30';
@@ -1330,6 +1399,147 @@ function registerBucketLaneControls() {
     });
     actions.insertBefore(laneCreate, actions.firstChild);
     actions.insertBefore(addBtn, actions.firstChild);
+  });
+}
+
+function closeBucketActionMenus({ restoreFocus = false } = {}) {
+  document.querySelectorAll('.bucket-action-menu-list').forEach((menuList) => {
+    menuList.hidden = true;
+  });
+  document.querySelectorAll('.bucket-action-menu-toggle').forEach((toggleBtn) => {
+    toggleBtn.setAttribute('aria-expanded', 'false');
+  });
+
+  if (restoreFocus && runtime.activeBucketMenuButton?.focus) {
+    runtime.activeBucketMenuButton.focus();
+  }
+  runtime.activeBucketMenuButton = null;
+}
+
+function registerBucketMenuHandlers() {
+  if (runtime.bucketMenuHandlersRegistered || typeof document === 'undefined') {
+    return;
+  }
+
+  runtime.bucketMenuHandlersRegistered = true;
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (target && target.closest('.bucket-action-menu')) {
+      return;
+    }
+    closeBucketActionMenus();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeBucketActionMenus({ restoreFocus: true });
+    }
+  });
+}
+
+function canRemoveBucketFromMenu(bucket) {
+  const visibility = normalizeBucketVisibility(state.bucketVisibility);
+  const active = buckets.filter((key) => visibility[key] !== false);
+  return active.includes(bucket) && active.length > 1;
+}
+
+function ensureBucketActionMenu(column) {
+  if (!column) {
+    return;
+  }
+
+  const bucket = column.dataset.bucket || '';
+  const actions = column.querySelector('.column-head-actions');
+  if (!bucket || !actions) {
+    return;
+  }
+
+  let menu = actions.querySelector('.bucket-action-menu');
+  let toggleBtn = menu?.querySelector('.bucket-action-menu-toggle') || null;
+  let menuList = menu?.querySelector('.bucket-action-menu-list') || null;
+
+  if (!menu || !toggleBtn || !menuList) {
+    menu = document.createElement('div');
+    menu.className = 'bucket-action-menu';
+
+    toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'ghost-btn bucket-action-menu-toggle';
+    toggleBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} 액션 메뉴`);
+    toggleBtn.setAttribute('aria-haspopup', 'menu');
+    toggleBtn.setAttribute('aria-expanded', 'false');
+    toggleBtn.textContent = '...';
+
+    menuList = document.createElement('div');
+    menuList.className = 'bucket-action-menu-list';
+    menuList.setAttribute('role', 'menu');
+    menuList.hidden = true;
+
+    toggleBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const willOpen = toggleBtn.getAttribute('aria-expanded') !== 'true';
+      closeBucketActionMenus();
+      if (!willOpen) {
+        return;
+      }
+      toggleBtn.setAttribute('aria-expanded', 'true');
+      menuList.hidden = false;
+      runtime.activeBucketMenuButton = toggleBtn;
+      const firstItem = menuList.querySelector('button:not([disabled])');
+      firstItem?.focus?.();
+    });
+
+    menu.append(toggleBtn, menuList);
+    actions.appendChild(menu);
+  }
+
+  const appendMenuItem = (label, onClick, disabled = false) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'bucket-action-menu-item';
+    item.setAttribute('role', 'menuitem');
+    item.textContent = label;
+    item.disabled = Boolean(disabled);
+    item.addEventListener('click', () => {
+      closeBucketActionMenus({ restoreFocus: true });
+      onClick();
+    });
+    menuList.appendChild(item);
+  };
+
+  menuList.innerHTML = '';
+  const laneAddBtn = actions.querySelector('.bucket-lane-add-btn');
+  if (laneAddBtn) {
+    appendMenuItem('세부 추가', () => laneAddBtn.click(), laneAddBtn.disabled);
+  }
+
+  const shareToggleBtn = actions.querySelector('.bucket-share-toggle');
+  if (shareToggleBtn) {
+    const shareLabel = String(shareToggleBtn.textContent || '').trim() || '공유 설정';
+    appendMenuItem(shareLabel, () => shareToggleBtn.click(), shareToggleBtn.disabled);
+  }
+
+  if (canRemoveBucketFromMenu(bucket)) {
+    appendMenuItem('버킷 제거', () => {
+      if (!removeBucket(bucket)) {
+        showToast('최소 1개 버킷은 남아 있어야 합니다.', 'error');
+        return;
+      }
+      showToast(`${getBucketLabel(bucket)} 버킷을 제거했습니다.`, 'success');
+      render();
+      queueSync();
+    });
+  }
+
+  menu.hidden = menuList.children.length === 0;
+  if (menu.hidden) {
+    closeBucketActionMenus();
+  }
+}
+
+function syncBucketActionMenus() {
+  registerBucketMenuHandlers();
+  document.querySelectorAll('.column[data-bucket]').forEach((column) => {
+    ensureBucketActionMenu(column);
   });
 }
 
@@ -1752,7 +1962,7 @@ function renderTodoItems(listEl, todos) {
     const memoListEl = item.querySelector('.todo-memo-list');
     const completeBtn = item.querySelector('.complete');
     const deleteBtn = item.querySelector('.delete');
-    const projectSelect = item.querySelector('.todo-category-select');
+    const projectSelect = item.querySelector('.todo-project-lane-select');
 
     todo.subtasks = normalizeTodoSubtasks(todo.subtasks || []);
     todo.memos = normalizeTodoMemos(todo.memos || []);
@@ -1784,7 +1994,6 @@ function renderTodoItems(listEl, todos) {
         details: todo.details || '',
         subtasks: normalizeTodoSubtasks(todo.subtasks || []),
         memos: normalizeTodoMemos(todo.memos || []),
-        categoryId: todo.categoryId,
         projectLaneId: todo.projectLaneId || '',
         bucket: todo.bucket,
         priority: todo.priority,
@@ -1947,7 +2156,6 @@ function createTodo({
   details = '',
   subtasks = [],
   memos = [],
-  categoryId = 'uncategorized',
   projectLaneId = '',
   bucket = 'bucket4',
   priority = 2,
@@ -1959,7 +2167,6 @@ function createTodo({
     details: normalizeTodoDetails(details),
     subtasks: normalizeTodoSubtasks(subtasks),
     memos: normalizeTodoMemos(memos),
-    categoryId,
     projectLaneId,
     bucket,
     priority: Number(priority),
@@ -1993,19 +2200,19 @@ function formatToday() {
 }
 
 function ensureToastHost() {
-  if (toastHostEl && document.body.contains(toastHostEl)) {
-    return toastHostEl;
+  if (runtime.toastHostEl && document.body.contains(runtime.toastHostEl)) {
+    return runtime.toastHostEl;
   }
 
-  toastHostEl = document.getElementById('toastHost');
-  if (!toastHostEl) {
-    toastHostEl = document.createElement('div');
-    toastHostEl.id = 'toastHost';
-    toastHostEl.className = 'toast-host';
-    document.body.appendChild(toastHostEl);
+  runtime.toastHostEl = document.getElementById('toastHost');
+  if (!runtime.toastHostEl) {
+    runtime.toastHostEl = document.createElement('div');
+    runtime.toastHostEl.id = 'toastHost';
+    runtime.toastHostEl.className = 'toast-host';
+    document.body.appendChild(runtime.toastHostEl);
   }
 
-  return toastHostEl;
+  return runtime.toastHostEl;
 }
 
 function showToast(message, type = 'info') {
@@ -2031,36 +2238,280 @@ function showToast(message, type = 'info') {
   }, 2200);
 }
 
-function markStateDirty() {
-  saveLocalState();
+function extractErrorDetail(error) {
+  if (!error) {
+    return '';
+  }
+  if (error instanceof Error) {
+    return error.stack || error.message || '';
+  }
+  return String(error);
+}
 
-  if (!isServerSync) {
+function dismissFatalErrorScreen({ restoreFocus = false } = {}) {
+  const overlay = runtime.fatalErrorOverlayEl;
+  if (overlay && overlay.parentNode) {
+    overlay.parentNode.removeChild(overlay);
+  }
+  runtime.fatalErrorOverlayEl = null;
+  runtime.fatalErrorShown = false;
+
+  if (restoreFocus && typeof document !== 'undefined') {
+    const fallbackFocus = document.querySelector('.topbar button, .app-tabs button');
+    fallbackFocus?.focus?.();
+  }
+}
+
+function renderFatalErrorScreen(error) {
+  if (runtime.fatalErrorShown || typeof document === 'undefined' || !document.body) {
     return;
   }
 
-  if (syncTimer) {
-    clearTimeout(syncTimer);
+  const details = extractErrorDetail(error);
+  const isDev = Boolean(import.meta?.env?.DEV);
+
+  runtime.fatalErrorShown = true;
+  const overlay = document.createElement('section');
+  overlay.className = 'fatal-error-overlay';
+  overlay.setAttribute('role', 'alertdialog');
+  overlay.setAttribute('aria-modal', 'true');
+
+  const card = document.createElement('div');
+  card.className = 'fatal-error-card';
+
+  const title = document.createElement('h2');
+  title.className = 'fatal-error-title';
+  title.textContent = '앱 오류가 발생했습니다';
+
+  const description = document.createElement('p');
+  description.className = 'fatal-error-description';
+  description.textContent = '화면을 복구하지 못했습니다. 다시 시도하거나 새로고침해 주세요.';
+
+  const actions = document.createElement('div');
+  actions.className = 'fatal-error-actions';
+
+  const retryBtn = document.createElement('button');
+  retryBtn.type = 'button';
+  retryBtn.className = 'ghost-btn';
+  retryBtn.textContent = '다시 시도';
+  retryBtn.addEventListener('click', () => {
+    dismissFatalErrorScreen();
+    render();
+  });
+
+  const reloadBtn = document.createElement('button');
+  reloadBtn.type = 'button';
+  reloadBtn.className = 'project-add-btn';
+  reloadBtn.textContent = '새로고침';
+  reloadBtn.addEventListener('click', () => {
+    window.location.reload();
+  });
+
+  actions.append(retryBtn, reloadBtn);
+  card.append(title, description);
+
+  if (isDev && details) {
+    const stack = document.createElement('pre');
+    stack.className = 'fatal-error-stack';
+    stack.textContent = details;
+    card.appendChild(stack);
   }
-  syncTimer = setTimeout(() => {
-    syncTimer = null;
+
+  card.appendChild(actions);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  runtime.fatalErrorOverlayEl = overlay;
+  retryBtn.focus();
+}
+
+function handleFatalError(error) {
+  console.error('[fatal]', error);
+  renderFatalErrorScreen(error);
+}
+
+function shouldIgnoreGlobalError(error) {
+  const detail = extractErrorDetail(error);
+  const message =
+    (error && typeof error === 'object' && 'message' in error ? String(error.message || '') : '') || detail;
+  const name = error && typeof error === 'object' && 'name' in error ? String(error.name || '') : '';
+
+  if (name === 'ApiRequestError' || name === 'AbortError') {
+    return true;
+  }
+  if (!message) {
+    return false;
+  }
+  if (message.includes('ResizeObserver loop limit exceeded')) {
+    return true;
+  }
+  if (message.includes('ResizeObserver loop completed with undelivered notifications')) {
+    return true;
+  }
+  if (message.includes('Failed to fetch') || message.includes('NetworkError')) {
+    return true;
+  }
+  if (message.includes('Loading chunk') && message.includes('failed')) {
+    return true;
+  }
+  return false;
+}
+
+function registerGlobalErrorBoundary() {
+  if (runtime.globalErrorHandlersRegistered || typeof window === 'undefined') {
+    return;
+  }
+
+  runtime.globalErrorHandlersRegistered = true;
+  window.addEventListener('error', (event) => {
+    const error = event?.error || new Error(String(event?.message || 'window_error'));
+    if (shouldIgnoreGlobalError(error)) {
+      return;
+    }
+    handleFatalError(error);
+  });
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event?.reason || new Error('unhandled_rejection');
+    if (shouldIgnoreGlobalError(reason)) {
+      return;
+    }
+    handleFatalError(reason);
+  });
+}
+
+function showApiErrorToast(message) {
+  const text = String(message || '').trim();
+  if (!text) {
+    return;
+  }
+  const now = Date.now();
+  if (text === runtime.lastApiErrorToastKey && now - runtime.lastApiErrorToastAt < API_ERROR_TOAST_COOLDOWN_MS) {
+    return;
+  }
+  runtime.lastApiErrorToastKey = text;
+  runtime.lastApiErrorToastAt = now;
+  showToast(text, 'error');
+}
+
+function createApiRequestError(path, response, payload = null) {
+  return createCoreApiRequestError(path, response, payload);
+}
+
+function markStateDirty() {
+  saveLocalState();
+
+  if (!runtime.isServerSync) {
+    return;
+  }
+
+  if (runtime.syncTimer) {
+    clearTimeout(runtime.syncTimer);
+  }
+  runtime.syncTimer = setTimeout(() => {
+    runtime.syncTimer = null;
     syncState().catch(() => {});
   }, SYNC_DEBOUNCE_MS);
 }
 
 function hasPendingLocalChanges() {
-  return localDirty || syncing || pendingSync || Boolean(syncTimer);
+  return runtime.localDirty || runtime.syncing || runtime.pendingSync || Boolean(runtime.syncTimer);
 }
 
 async function apiRequest(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.headers || {}),
-    },
-    ...options,
+  return performApiRequest({
+    baseUrl: API_BASE,
+    path,
+    options,
+    onErrorToast: showApiErrorToast,
+    createError: createApiRequestError,
   });
-  return response;
+}
+
+function mergeBucketDefaultsFromMeta(metaPayload = {}) {
+  const metaKeys = Array.isArray(metaPayload.bucketKeys)
+    ? metaPayload.bucketKeys.map((key) => String(key || '').trim()).filter(Boolean)
+    : [];
+  const nextKeys = metaKeys.length > 0 ? [...new Set(metaKeys)] : [...buckets];
+  if (nextKeys.length === 0) {
+    return;
+  }
+
+  const nextLabels = nextKeys.reduce((acc, key, index) => {
+    const fromMeta = typeof metaPayload.defaultBucketLabels?.[key] === 'string'
+      ? String(metaPayload.defaultBucketLabels[key]).trim()
+      : '';
+    acc[key] = fromMeta || `버킷 ${index + 1}`;
+    return acc;
+  }, {});
+
+  const nextVisibility = nextKeys.reduce((acc, key, index) => {
+    const fromMeta = metaPayload.defaultBucketVisibility?.[key];
+    acc[key] = typeof fromMeta === 'boolean' ? fromMeta : index < 4;
+    return acc;
+  }, {});
+
+  buckets.splice(0, buckets.length, ...nextKeys);
+  Object.keys(defaultBucketLabels).forEach((key) => {
+    delete defaultBucketLabels[key];
+  });
+  Object.entries(nextLabels).forEach(([key, value]) => {
+    defaultBucketLabels[key] = value;
+  });
+  Object.keys(defaultBucketVisibility).forEach((key) => {
+    delete defaultBucketVisibility[key];
+  });
+  Object.entries(nextVisibility).forEach(([key, value]) => {
+    defaultBucketVisibility[key] = value;
+  });
+}
+
+function applyRuntimeMeta(metaPayload = {}) {
+  mergeBucketDefaultsFromMeta(metaPayload);
+
+  const poll = metaPayload?.poll || {};
+  const holidays = metaPayload?.holidays || {};
+  const nextStateActive = Number(poll.stateActiveMs || config.poll.stateActiveMs);
+  const nextStateHidden = Number(poll.stateHiddenMs || config.poll.stateHiddenMs);
+  const nextCollabActive = Number(poll.collabActiveMs || config.poll.collabActiveMs);
+  const nextCollabHidden = Number(poll.collabHiddenMs || config.poll.collabHiddenMs);
+  const nextHolidayTtl = Number(holidays.clientCacheTtlMs || config.holidays.cacheTtlMs);
+
+  config.poll.stateActiveMs = Number.isFinite(nextStateActive) && nextStateActive > 0
+    ? nextStateActive
+    : STATE_POLL_ACTIVE_INTERVAL_MS_DEFAULT;
+  config.poll.stateHiddenMs = Number.isFinite(nextStateHidden) && nextStateHidden > 0
+    ? nextStateHidden
+    : STATE_POLL_HIDDEN_INTERVAL_MS_DEFAULT;
+  config.poll.collabActiveMs = Number.isFinite(nextCollabActive) && nextCollabActive > 0
+    ? nextCollabActive
+    : COLLAB_POLL_ACTIVE_INTERVAL_MS_DEFAULT;
+  config.poll.collabHiddenMs = Number.isFinite(nextCollabHidden) && nextCollabHidden > 0
+    ? nextCollabHidden
+    : COLLAB_POLL_HIDDEN_INTERVAL_MS_DEFAULT;
+  config.holidays.cacheTtlMs = Number.isFinite(nextHolidayTtl) && nextHolidayTtl > 0
+    ? nextHolidayTtl
+    : HOLIDAY_CACHE_TTL_MS_DEFAULT;
+  config.metaLoaded = true;
+
+  if (runtime.isServerSync && runtime.authUser) {
+    startStatePolling();
+    syncCollabPolling();
+  }
+}
+
+async function loadRuntimeMeta() {
+  try {
+    const response = await apiRequest('/meta', {
+      method: 'GET',
+      suppressErrorToast: true,
+    });
+    if (!response.ok) {
+      return;
+    }
+    const payload = await safeReadJson(response);
+    applyRuntimeMeta(payload || {});
+  } catch {
+    // offline fallback keeps local defaults
+  }
 }
 
 function getCookie(name) {
@@ -2108,15 +2559,15 @@ function safeReadJson(response) {
 }
 
 function resetCollabState() {
-  collabProfile = {
+  runtime.collabProfile = {
     publicId: '',
     publicIdUpdatedAt: null,
   };
-  collabSummary = null;
-  collabShareSettingsByBucket = {};
-  sharedTodosByContext = {};
-  sharedCommentsByTodo = {};
-  activeSharedContextByBucket = {};
+  runtime.collabSummary = null;
+  runtime.collabShareSettingsByBucket = {};
+  runtime.sharedTodosByContext = {};
+  runtime.sharedCommentsByTodo = {};
+  runtime.activeSharedContextByBucket = {};
   stopCollabPolling();
 }
 
@@ -2150,11 +2601,11 @@ function normalizeCollabShareSettings(summaryPayload) {
 }
 
 function isBucketShareEnabled(bucket) {
-  return Boolean(collabShareSettingsByBucket[bucket]);
+  return Boolean(runtime.collabShareSettingsByBucket[bucket]);
 }
 
 function shouldShowSharedSection(bucket) {
-  if (!isServerSync || !authUser || !collabSummary) {
+  if (!runtime.isServerSync || !runtime.authUser || !runtime.collabSummary) {
     return false;
   }
   if (isBucketShareEnabled(bucket)) {
@@ -2171,21 +2622,21 @@ function pruneCollabCaches() {
     });
   });
 
-  Object.keys(sharedTodosByContext).forEach((key) => {
+  Object.keys(runtime.sharedTodosByContext).forEach((key) => {
     if (!validContextKeys.has(key)) {
-      delete sharedTodosByContext[key];
+      delete runtime.sharedTodosByContext[key];
     }
   });
 
-  Object.keys(activeSharedContextByBucket).forEach((bucket) => {
-    const key = activeSharedContextByBucket[bucket];
+  Object.keys(runtime.activeSharedContextByBucket).forEach((bucket) => {
+    const key = runtime.activeSharedContextByBucket[bucket];
     if (!validContextKeys.has(key)) {
-      delete activeSharedContextByBucket[bucket];
+      delete runtime.activeSharedContextByBucket[bucket];
     }
   });
 
   const validTodoIds = new Set();
-  Object.values(sharedTodosByContext).forEach((todos) => {
+  Object.values(runtime.sharedTodosByContext).forEach((todos) => {
     const list = Array.isArray(todos) ? todos : [];
     list.forEach((todo) => {
       if (todo?.id) {
@@ -2193,9 +2644,9 @@ function pruneCollabCaches() {
       }
     });
   });
-  Object.keys(sharedCommentsByTodo).forEach((todoId) => {
+  Object.keys(runtime.sharedCommentsByTodo).forEach((todoId) => {
     if (!validTodoIds.has(todoId)) {
-      delete sharedCommentsByTodo[todoId];
+      delete runtime.sharedCommentsByTodo[todoId];
     }
   });
 }
@@ -2214,14 +2665,14 @@ function ensureBucketShareToggle(bucket) {
   if (!button) {
     button = document.createElement('button');
     button.type = 'button';
-    button.className = 'ghost-btn bucket-share-toggle';
+    button.className = 'ghost-btn bucket-share-toggle bucket-header-action';
     button.dataset.sharedAction = 'toggle-share-setting';
     button.dataset.bucket = bucket;
     actions.appendChild(button);
   }
 
   const enabled = isBucketShareEnabled(bucket);
-  const ready = isServerSync && !!authUser && !!collabSummary;
+  const ready = runtime.isServerSync && !!runtime.authUser && !!runtime.collabSummary;
   button.disabled = !ready;
   button.textContent = enabled ? '공유 ON' : '공유 시작';
   button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
@@ -2231,11 +2682,11 @@ function ensureBucketShareToggle(bucket) {
 function getCollabContextsForBucket(bucket) {
   const contexts = [];
   const seen = new Set();
-  if (!collabSummary) {
+  if (!runtime.collabSummary) {
     return contexts;
   }
 
-  const owned = Array.isArray(collabSummary.ownedBuckets) ? collabSummary.ownedBuckets : [];
+  const owned = Array.isArray(runtime.collabSummary.ownedBuckets) ? runtime.collabSummary.ownedBuckets : [];
   owned.forEach((entry) => {
     if (!entry || entry.bucketKey !== bucket) {
       return;
@@ -2260,7 +2711,7 @@ function getCollabContextsForBucket(bucket) {
     });
   });
 
-  const joined = Array.isArray(collabSummary.joinedBuckets) ? collabSummary.joinedBuckets : [];
+  const joined = Array.isArray(runtime.collabSummary.joinedBuckets) ? runtime.collabSummary.joinedBuckets : [];
   joined.forEach((entry) => {
     if (!entry || entry.bucketKey !== bucket) {
       return;
@@ -2280,12 +2731,12 @@ function getCollabContextsForBucket(bucket) {
     });
   });
 
-  if (isServerSync && authUser && isBucketShareEnabled(bucket)) {
-    const ownerKey = collabContextKey(Number(authUser.id), bucket);
+  if (runtime.isServerSync && runtime.authUser && isBucketShareEnabled(bucket)) {
+    const ownerKey = collabContextKey(Number(runtime.authUser.id), bucket);
     if (!seen.has(ownerKey)) {
       contexts.unshift({
         key: ownerKey,
-        ownerUserId: Number(authUser.id),
+        ownerUserId: Number(runtime.authUser.id),
         bucketKey: bucket,
         source: 'owned',
         label: `내 공유 (${getBucketLabel(bucket)})`,
@@ -2299,13 +2750,13 @@ function getCollabContextsForBucket(bucket) {
 function ensureActiveSharedContext(bucket) {
   const contexts = getCollabContextsForBucket(bucket);
   if (contexts.length === 0) {
-    delete activeSharedContextByBucket[bucket];
+    delete runtime.activeSharedContextByBucket[bucket];
     return null;
   }
 
-  const activeKey = activeSharedContextByBucket[bucket];
+  const activeKey = runtime.activeSharedContextByBucket[bucket];
   const active = contexts.find((entry) => entry.key === activeKey) || contexts[0];
-  activeSharedContextByBucket[bucket] = active.key;
+  runtime.activeSharedContextByBucket[bucket] = active.key;
   return active;
 }
 
@@ -2315,7 +2766,7 @@ function getSharedTodoById(todoId) {
     return null;
   }
 
-  for (const [contextKey, todos] of Object.entries(sharedTodosByContext)) {
+  for (const [contextKey, todos] of Object.entries(runtime.sharedTodosByContext)) {
     const list = Array.isArray(todos) ? todos : [];
     const todo = list.find((item) => item && item.id === targetId);
     if (todo) {
@@ -2339,6 +2790,8 @@ async function collabApiRequest(path, options = {}, { withCsrf = false, retryOnC
   const response = await apiRequest(path, {
     ...options,
     headers,
+    allowHttpStatus: [401, 403, 404, 409, 429],
+    suppressErrorToast: true,
   });
 
   if (response.status === 401) {
@@ -2351,7 +2804,7 @@ async function collabApiRequest(path, options = {}, { withCsrf = false, retryOnC
     const payload = await safeReadJson(response.clone());
     if (payload?.error === 'invalid_csrf_token') {
       await checkAuth();
-      if (isServerSync && authUser) {
+      if (runtime.isServerSync && runtime.authUser) {
         return collabApiRequest(path, options, { withCsrf, retryOnCsrf: false });
       }
     }
@@ -2360,127 +2813,132 @@ async function collabApiRequest(path, options = {}, { withCsrf = false, retryOnC
   return response;
 }
 
-async function refreshSharedTodosByContext(context) {
-  if (!context || !isServerSync || !authUser) {
-    return;
-  }
+function applyCollabSnapshotPayload(payload = {}) {
+  const summary = payload?.summary || null;
+  runtime.collabSummary = summary;
+  runtime.collabShareSettingsByBucket = normalizeCollabShareSettings(summary);
 
-  const response = await collabApiRequest(
-    `/collab/shares/${encodeURIComponent(context.ownerUserId)}/${encodeURIComponent(context.bucketKey)}/todos`,
-    { method: 'GET' },
-  );
-  if (response.status === 403 || response.status === 404) {
-    delete sharedTodosByContext[context.key];
-    return;
-  }
-  if (!response.ok) {
-    return;
-  }
+  const profile = summary?.profile || {};
+  runtime.collabProfile = {
+    publicId: normalizePublicIdInput(profile.publicId || runtime.authUser?.publicId || ''),
+    publicIdUpdatedAt: profile.publicIdUpdatedAt || null,
+  };
 
-  const payload = await safeReadJson(response);
-  const todos = Array.isArray(payload?.todos) ? payload.todos : [];
-  sharedTodosByContext[context.key] = todos;
-}
+  const todosByContextRaw =
+    payload?.todosByContext && typeof payload.todosByContext === 'object' ? payload.todosByContext : {};
+  runtime.sharedTodosByContext = Object.entries(todosByContextRaw).reduce((acc, [key, todos]) => {
+    acc[key] = Array.isArray(todos) ? todos : [];
+    return acc;
+  }, {});
 
-async function refreshAllSharedTodos() {
-  const contexts = [];
-  buckets.forEach((bucket) => {
-    const active = ensureActiveSharedContext(bucket);
-    if (active) {
-      contexts.push(active);
-    }
+  const commentsByTodoRaw =
+    payload?.commentsByTodo && typeof payload.commentsByTodo === 'object' ? payload.commentsByTodo : {};
+  Object.entries(commentsByTodoRaw).forEach(([todoId, comments]) => {
+    runtime.sharedCommentsByTodo[String(todoId)] = Array.isArray(comments) ? comments : [];
   });
-  await Promise.all(contexts.map((context) => refreshSharedTodosByContext(context)));
+
+  pruneCollabCaches();
 }
 
-async function refreshCollabSummary({ includeTodos = true } = {}) {
-  if (!isServerSync || !authUser) {
+function buildSnapshotCommentTodoQuery(commentTodoIds = []) {
+  const normalized = Array.isArray(commentTodoIds)
+    ? [...new Set(commentTodoIds.map((todoId) => String(todoId || '').trim()).filter(Boolean))].slice(0, 40)
+    : [];
+  if (normalized.length === 0) {
+    return '';
+  }
+  return `?commentTodoIds=${encodeURIComponent(normalized.join(','))}`;
+}
+
+async function refreshCollabSnapshot({ commentTodoIds = [] } = {}) {
+  if (!runtime.isServerSync || !runtime.authUser) {
     resetCollabState();
     return null;
   }
 
-  const response = await collabApiRequest('/collab/summary', { method: 'GET' });
+  const query = buildSnapshotCommentTodoQuery(commentTodoIds);
+  const response = await collabApiRequest(`/collab/snapshot${query}`, { method: 'GET' });
   if (!response.ok) {
     return null;
   }
 
   const payload = await safeReadJson(response);
-  collabSummary = payload || null;
-  collabShareSettingsByBucket = normalizeCollabShareSettings(payload);
-  const profile = payload?.profile || {};
-  collabProfile = {
-    publicId: normalizePublicIdInput(profile.publicId || authUser?.publicId || ''),
-    publicIdUpdatedAt: profile.publicIdUpdatedAt || null,
-  };
-  pruneCollabCaches();
+  applyCollabSnapshotPayload(payload);
+  return runtime.collabSummary;
+}
 
-  if (includeTodos) {
-    await refreshAllSharedTodos();
+async function refreshCollabSummary({ includeTodos = true, commentTodoIds = [] } = {}) {
+  if (!includeTodos) {
+    return refreshCollabSnapshot({ commentTodoIds });
   }
-  return collabSummary;
+  return refreshCollabSnapshot({ commentTodoIds });
 }
 
 async function refreshSharedComments(todoId) {
   const targetId = String(todoId || '');
-  if (!targetId || !isServerSync || !authUser) {
+  if (!targetId || !runtime.isServerSync || !runtime.authUser) {
     return [];
   }
 
-  const response = await collabApiRequest(
-    `/collab/shared-todos/${encodeURIComponent(targetId)}/comments`,
-    { method: 'GET' },
-  );
-  if (!response.ok) {
-    return [];
-  }
-  const payload = await safeReadJson(response);
-  const comments = Array.isArray(payload?.comments) ? payload.comments : [];
-  sharedCommentsByTodo[targetId] = comments;
-  return comments;
+  await refreshCollabSnapshot({ commentTodoIds: [targetId] });
+  const comments = runtime.sharedCommentsByTodo[targetId];
+  return Array.isArray(comments) ? comments : [];
 }
 
 function stopCollabPolling() {
-  if (collabPollTimer) {
-    clearInterval(collabPollTimer);
-    collabPollTimer = null;
+  if (runtime.collabPollTimer) {
+    clearInterval(runtime.collabPollTimer);
+    runtime.collabPollTimer = null;
   }
-  collabPollInFlight = false;
+  runtime.collabPollIntervalMs = 0;
+  runtime.collabPollInFlight = false;
 }
 
-async function pollCollabData(force = false) {
-  if (!isServerSync || !authUser || currentRoute !== 'buckets' || collabPollInFlight) {
-    return;
+function getCollabPollIntervalMs() {
+  if (typeof document !== 'undefined' && document.hidden) {
+    return config.poll.collabHiddenMs;
   }
-  if (!force && typeof document !== 'undefined' && document.hidden) {
+  return config.poll.collabActiveMs;
+}
+
+async function pollCollabData() {
+  if (!runtime.isServerSync || !runtime.authUser || runtime.currentRoute !== 'buckets' || runtime.collabPollInFlight) {
     return;
   }
 
-  collabPollInFlight = true;
+  runtime.collabPollInFlight = true;
   try {
-    await refreshCollabSummary({ includeTodos: true });
+    await refreshCollabSnapshot();
     render();
   } catch {
     // Keep local snapshot and retry on next poll.
   } finally {
-    collabPollInFlight = false;
+    runtime.collabPollInFlight = false;
   }
 }
 
 function startCollabPolling() {
-  if (!isServerSync || !authUser || currentRoute !== 'buckets') {
+  if (!runtime.isServerSync || !runtime.authUser || runtime.currentRoute !== 'buckets') {
     stopCollabPolling();
     return;
   }
-  if (!collabPollTimer) {
-    collabPollTimer = setInterval(() => {
-      pollCollabData().catch(() => {});
-    }, COLLAB_POLL_INTERVAL_MS);
+
+  const nextInterval = getCollabPollIntervalMs();
+  if (runtime.collabPollTimer && runtime.collabPollIntervalMs !== nextInterval) {
+    clearInterval(runtime.collabPollTimer);
+    runtime.collabPollTimer = null;
   }
-  pollCollabData(true).catch(() => {});
+  if (!runtime.collabPollTimer) {
+    runtime.collabPollIntervalMs = nextInterval;
+    runtime.collabPollTimer = setInterval(() => {
+      pollCollabData().catch(() => {});
+    }, nextInterval);
+  }
+  pollCollabData().catch(() => {});
 }
 
 function syncCollabPolling() {
-  if (!isServerSync || !authUser || currentRoute !== 'buckets') {
+  if (!runtime.isServerSync || !runtime.authUser || runtime.currentRoute !== 'buckets') {
     stopCollabPolling();
     return;
   }
@@ -2535,10 +2993,10 @@ async function savePublicIdToServer(inputPublicId) {
 
   const payload = await safeReadJson(response);
   const profile = payload?.profile || {};
-  collabProfile.publicId = normalizePublicIdInput(profile.publicId || publicId);
-  collabProfile.publicIdUpdatedAt = profile.publicIdUpdatedAt || collabProfile.publicIdUpdatedAt;
-  if (authUser) {
-    authUser.publicId = collabProfile.publicId;
+  runtime.collabProfile.publicId = normalizePublicIdInput(profile.publicId || publicId);
+  runtime.collabProfile.publicIdUpdatedAt = profile.publicIdUpdatedAt || runtime.collabProfile.publicIdUpdatedAt;
+  if (runtime.authUser) {
+    runtime.authUser.publicId = runtime.collabProfile.publicId;
   }
   return true;
 }
@@ -2548,8 +3006,8 @@ function getProfileDisplayName() {
   if (profile.nickname) {
     return `${profile.nickname}${profile.honorific}`;
   }
-  if (isServerSync && authUser) {
-    const fallback = authUser.nickname || authUser.email || '';
+  if (runtime.isServerSync && runtime.authUser) {
+    const fallback = runtime.authUser.nickname || runtime.authUser.email || '';
     return fallback ? `${fallback}${profile.honorific}` : '';
   }
   return '';
@@ -2565,22 +3023,22 @@ function updateProfileAliasUI() {
 
 function applyAuthState(me) {
   if (!me || !me.authenticated) {
-    isServerSync = false;
-    authUser = null;
+    runtime.isServerSync = false;
+    runtime.authUser = null;
     state.version = 0;
-    localDirty = false;
+    runtime.localDirty = false;
     stopStatePolling();
     resetCollabState();
     return;
   }
 
-  isServerSync = true;
-  authUser = me.user;
-  collabProfile = {
+  runtime.isServerSync = true;
+  runtime.authUser = me.user;
+  runtime.collabProfile = {
     publicId: normalizePublicIdInput(me.user?.publicId || ''),
     publicIdUpdatedAt: null,
   };
-  collabShareSettingsByBucket = {};
+  runtime.collabShareSettingsByBucket = {};
   startStatePolling();
   syncCollabPolling();
 }
@@ -2591,13 +3049,13 @@ function updateAuthUI() {
   }
 
   updateProfileAliasUI();
-  if (isServerSync && authUser) {
-    const label = authUser.nickname || authUser.email || `kakao-${authUser.kakaoId || ''}`;
+  if (runtime.isServerSync && runtime.authUser) {
+    const label = runtime.authUser.nickname || runtime.authUser.email || `kakao-${runtime.authUser.kakaoId || ''}`;
     authStatusEl.textContent = `로그인 상태: ${label}`;
     authBtn.innerHTML = '<span>로그아웃</span>';
     if (profilePublicIdInput) {
       profilePublicIdInput.disabled = false;
-      profilePublicIdInput.value = normalizePublicIdInput(collabProfile.publicId || authUser.publicId || '');
+      profilePublicIdInput.value = normalizePublicIdInput(runtime.collabProfile.publicId || runtime.authUser.publicId || '');
     }
     if (profilePublicIdHint) {
       profilePublicIdHint.textContent = '형식: a-z, 0-9, _ / 4~20자 ( @, -, 공백은 자동 변환 )';
@@ -2617,8 +3075,12 @@ function updateAuthUI() {
 
 async function checkAuth() {
   try {
-    const response = await apiRequest('/auth/me', { method: 'GET' });
-    if (!response.ok) {
+    const response = await apiRequest('/auth/me', {
+      method: 'GET',
+      allowHttpStatus: [401],
+      suppressErrorToast: true,
+    });
+    if (response.status === 401) {
       applyAuthState(null);
       return;
     }
@@ -2631,8 +3093,12 @@ async function checkAuth() {
 
 async function loadServerState() {
   try {
-    const response = await apiRequest('/state', { method: 'GET' });
-    if (!response.ok) {
+    const response = await apiRequest('/state', {
+      method: 'GET',
+      allowHttpStatus: [401],
+      suppressErrorToast: true,
+    });
+    if (response.status === 401) {
       return null;
     }
 
@@ -2648,26 +3114,24 @@ async function loadServerState() {
   }
 }
 
-async function pollServerState(force = false) {
-  if (!isServerSync || !authUser || statePollInFlight) {
+async function pollServerState() {
+  if (!runtime.isServerSync || !runtime.authUser || runtime.statePollInFlight) {
     return;
   }
   if (hasPendingLocalChanges()) {
     return;
   }
-  if (!force && typeof document !== 'undefined' && document.hidden) {
-    return;
-  }
 
-  statePollInFlight = true;
+  runtime.statePollInFlight = true;
   try {
-    const response = await apiRequest('/state', { method: 'GET' });
+    const response = await apiRequest('/state', {
+      method: 'GET',
+      allowHttpStatus: [401],
+      suppressErrorToast: true,
+    });
     if (response.status === 401) {
       applyAuthState(null);
       updateAuthUI();
-      return;
-    }
-    if (!response.ok) {
       return;
     }
 
@@ -2684,107 +3148,176 @@ async function pollServerState(force = false) {
   } catch {
     // Keep current state and try again on next polling tick.
   } finally {
-    statePollInFlight = false;
+    runtime.statePollInFlight = false;
   }
 }
 
 function stopStatePolling() {
-  if (statePollTimer) {
-    clearInterval(statePollTimer);
-    statePollTimer = null;
+  if (runtime.statePollTimer) {
+    clearInterval(runtime.statePollTimer);
+    runtime.statePollTimer = null;
   }
-  statePollInFlight = false;
+  runtime.statePollIntervalMs = 0;
+  runtime.statePollInFlight = false;
+}
+
+function getStatePollIntervalMs() {
+  if (typeof document !== 'undefined' && document.hidden) {
+    return config.poll.stateHiddenMs;
+  }
+  return config.poll.stateActiveMs;
 }
 
 function startStatePolling() {
-  if (!isServerSync || !authUser) {
+  if (!runtime.isServerSync || !runtime.authUser) {
     stopStatePolling();
     return;
   }
-  if (!statePollTimer) {
-    statePollTimer = setInterval(() => {
-      pollServerState().catch(() => {});
-    }, STATE_POLL_INTERVAL_MS);
+
+  const nextInterval = getStatePollIntervalMs();
+  if (runtime.statePollTimer && runtime.statePollIntervalMs !== nextInterval) {
+    clearInterval(runtime.statePollTimer);
+    runtime.statePollTimer = null;
   }
-  pollServerState(true).catch(() => {});
+  if (!runtime.statePollTimer) {
+    runtime.statePollIntervalMs = nextInterval;
+    runtime.statePollTimer = setInterval(() => {
+      pollServerState().catch(() => {});
+    }, nextInterval);
+  }
+  pollServerState().catch(() => {});
 }
 
 function registerStatePollingEvents() {
-  if (statePollingEventsRegistered || typeof window === 'undefined') {
+  if (runtime.statePollingEventsRegistered || typeof window === 'undefined') {
     return;
   }
 
-  statePollingEventsRegistered = true;
+  runtime.statePollingEventsRegistered = true;
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
+      startStatePolling();
+      syncCollabPolling();
       if (!document.hidden) {
-        pollServerState(true).catch(() => {});
-        pollCollabData(true).catch(() => {});
+        pollServerState().catch(() => {});
+        pollCollabData().catch(() => {});
       }
     });
   }
   window.addEventListener('focus', () => {
-    pollServerState(true).catch(() => {});
-    pollCollabData(true).catch(() => {});
+    startStatePolling();
+    syncCollabPolling();
+    pollServerState().catch(() => {});
+    pollCollabData().catch(() => {});
   });
   window.addEventListener('online', () => {
-    pollServerState(true).catch(() => {});
-    pollCollabData(true).catch(() => {});
+    startStatePolling();
+    syncCollabPolling();
+    pollServerState().catch(() => {});
+    pollCollabData().catch(() => {});
   });
 }
 
-async function syncState() {
-  if (!isServerSync || !authUser || syncing) {
+function snapshotSyncStatePayload() {
+  return {
+    todos: state.todos,
+    doneLog: state.doneLog,
+    calendarItems: state.calendarItems,
+    bucketLabels: state.bucketLabels,
+    bucketOrder: state.bucketOrder,
+    bucketVisibility: state.bucketVisibility,
+    projectLanes: state.projectLanes,
+    userProfile: state.userProfile,
+    version: state.version,
+  };
+}
+
+function backupConflictSnapshot(remotePayload = {}) {
+  try {
+    const backup = {
+      at: new Date().toISOString(),
+      local: snapshotSyncStatePayload(),
+      remote: {
+        state: remotePayload?.state || {},
+        version: Number(remotePayload?.version || 0),
+        updatedAt: remotePayload?.updatedAt || null,
+      },
+    };
+    localStorage.setItem(CONFLICT_BACKUP_STORAGE_KEY, JSON.stringify(backup));
+  } catch {
+    // ignore localStorage failures
+  }
+}
+
+function handleVersionConflict(payload = {}) {
+  const remoteVersion = Number(payload?.version || 0);
+  const remoteState = payload?.state || {};
+  backupConflictSnapshot(payload);
+
+  const canPrompt = typeof window !== 'undefined' && typeof window.confirm === 'function';
+  if (!canPrompt) {
+    applyServerStateSnapshot(remoteState, remoteVersion);
     return;
   }
 
-  syncing = true;
+  const keepLocal = window.confirm(
+    '버전 충돌이 발생했습니다.\n확인: 내 변경 유지 후 다시 저장\n취소: 서버 최신 상태 적용',
+  );
+
+  if (keepLocal) {
+    if (remoteVersion > 0) {
+      state.version = remoteVersion;
+    }
+    runtime.localDirty = true;
+    queueSync(true);
+    showToast('내 변경을 유지하고 다시 저장을 시도합니다.', 'error');
+    return;
+  }
+
+  applyServerStateSnapshot(remoteState, remoteVersion);
+  showToast('서버 최신 상태를 적용했습니다.', 'info');
+}
+
+async function syncState() {
+  if (!runtime.isServerSync || !runtime.authUser || runtime.syncing) {
+    return;
+  }
+
+  const syncPayload = snapshotSyncStatePayload();
+  runtime.syncing = true;
   try {
     const response = await apiRequest('/state', {
       method: 'PUT',
+      allowHttpStatus: [401, 409],
+      suppressErrorToast: true,
       headers: {
         'x-csrf-token': getCookie('daycheck_csrf') || '',
       },
-      body: JSON.stringify({
-        todos: state.todos,
-        doneLog: state.doneLog,
-        calendarItems: state.calendarItems,
-        categories: state.categories,
-        bucketLabels: state.bucketLabels,
-        bucketOrder: state.bucketOrder,
-        bucketVisibility: state.bucketVisibility,
-        projectLanes: state.projectLanes,
-        userProfile: state.userProfile,
-        version: state.version,
-      }),
+      body: JSON.stringify(syncPayload),
     });
 
-    if (!response.ok) {
-      if (response.status === 401) {
-        applyAuthState(null);
-        updateAuthUI();
-        return;
-      }
-      if (response.status === 409) {
-        const data = await response.json();
-        if (data && data.state) {
-          applyServerStateSnapshot(data.state, Number(data.version || 0));
-        }
-      }
+    if (response.status === 401) {
+      applyAuthState(null);
+      updateAuthUI();
+      return;
+    }
+    if (response.status === 409) {
+      const data = await safeReadJson(response);
+      handleVersionConflict(data);
       return;
     }
 
     const result = await response.json();
     state.version = Number(result.version || state.version);
-    localDirty = false;
+    runtime.localDirty = false;
   } catch {
     // Keep local data and retry on next edit.
   } finally {
-    syncing = false;
+    runtime.syncing = false;
   }
 
-  if (pendingSync) {
-    pendingSync = false;
+  if (runtime.pendingSync) {
+    runtime.pendingSync = false;
     syncState().catch(() => {});
   }
 }
@@ -2792,21 +3325,21 @@ async function syncState() {
 function queueSync(immediate = false) {
   saveLocalState();
 
-  if (!isServerSync) {
+  if (!runtime.isServerSync) {
     return;
   }
 
-  localDirty = true;
+  runtime.localDirty = true;
 
-  if (syncing) {
-    pendingSync = true;
+  if (runtime.syncing) {
+    runtime.pendingSync = true;
     return;
   }
 
   if (immediate) {
-    if (syncTimer) {
-      clearTimeout(syncTimer);
-      syncTimer = null;
+    if (runtime.syncTimer) {
+      clearTimeout(runtime.syncTimer);
+      runtime.syncTimer = null;
     }
     syncState().catch(() => {});
     return;
@@ -2850,9 +3383,9 @@ function animateRouteView(route, direction = 'none') {
     return;
   }
 
-  if (routeTransitionTimer) {
-    clearTimeout(routeTransitionTimer);
-    routeTransitionTimer = null;
+  if (runtime.routeTransitionTimer) {
+    clearTimeout(runtime.routeTransitionTimer);
+    runtime.routeTransitionTimer = null;
   }
 
   routeViewEls.forEach((viewEl) => {
@@ -2865,30 +3398,33 @@ function animateRouteView(route, direction = 'none') {
     activeView.classList.add('is-entering-backward');
   }
 
-  routeTransitionTimer = setTimeout(() => {
+  runtime.routeTransitionTimer = setTimeout(() => {
     routeViewEls.forEach((viewEl) => {
       viewEl.classList.remove('is-entering-forward', 'is-entering-backward');
     });
-    routeTransitionTimer = null;
+    runtime.routeTransitionTimer = null;
   }, 190);
 }
 
 function activateRoute(route, direction = 'none') {
-  currentRoute = APP_ROUTES.includes(route) ? route : 'home';
+  runtime.currentRoute = APP_ROUTES.includes(route) ? route : 'home';
   syncCollabPolling();
 
   routeViewEls.forEach((viewEl) => {
-    const isActive = viewEl.dataset.routeView === currentRoute;
+    const isActive = viewEl.dataset.routeView === runtime.currentRoute;
     viewEl.hidden = !isActive;
     viewEl.classList.toggle('is-active', isActive);
   });
 
-  updateRouteTabs(currentRoute);
-  animateRouteView(currentRoute, direction);
-  focusRouteHeading(currentRoute);
+  updateRouteTabs(runtime.currentRoute);
+  animateRouteView(runtime.currentRoute, direction);
+  focusRouteHeading(runtime.currentRoute);
 }
 
 function renderRoute(route) {
+  if (route !== 'buckets') {
+    closeBucketActionMenus();
+  }
   switch (route) {
     case 'buckets':
       renderTodosByBucket();
@@ -2908,26 +3444,37 @@ function renderRoute(route) {
 }
 
 function render() {
-  ensureBucketColumns();
-  ensureBucketSelectOptions();
-  applyBucketOrder();
-  renderProjectLaneColumns();
-  applyBucketSizes();
-  applyProjectLaneSizes();
-  applyBucketVisibility();
-  applyBucketLabels();
-  renderRoute(currentRoute);
-  renderCollabPanel();
-
-  const activeModule = routeModules[currentRoute];
-  if (activeModule?.render) {
-    activeModule.render(state);
-  }
-  if (authView?.render) {
-    authView.render({ isServerSync, authUser });
+  if (runtime.fatalErrorShown) {
+    return;
   }
 
-  updateProfileAliasUI();
+  try {
+    ensureBucketColumns();
+    ensureBucketSelectOptions();
+    applyBucketOrder();
+    renderProjectLaneColumns();
+    applyBucketSizes();
+    applyProjectLaneSizes();
+    applyBucketVisibility();
+    applyBucketLabels();
+    renderRoute(runtime.currentRoute);
+    renderCollabPanel();
+
+    const activeModule = runtime.routeModules[runtime.currentRoute];
+    if (activeModule?.render) {
+      activeModule.render(state);
+    }
+    if (runtime.authView?.render) {
+      runtime.authView.render({
+        isServerSync: runtime.isServerSync,
+        authUser: runtime.authUser,
+      });
+    }
+
+    updateProfileAliasUI();
+  } catch (error) {
+    handleFatalError(error);
+  }
 }
 
 function renderWeeklyReport() {
@@ -3203,8 +3750,8 @@ function createSharedCommentItem(comment, context) {
   li.appendChild(body);
 
   const canDelete =
-    Number(authUser?.id) === Number(comment.author?.userId) ||
-    Number(authUser?.id) === Number(context.ownerUserId);
+    Number(runtime.authUser?.id) === Number(comment.author?.userId) ||
+    Number(runtime.authUser?.id) === Number(context.ownerUserId);
   if (canDelete) {
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
@@ -3222,7 +3769,7 @@ function renderSharedComments(listEl, todo, context) {
   if (!listEl) {
     return;
   }
-  const comments = Array.isArray(sharedCommentsByTodo[todo.id]) ? sharedCommentsByTodo[todo.id] : [];
+  const comments = Array.isArray(runtime.sharedCommentsByTodo[todo.id]) ? runtime.sharedCommentsByTodo[todo.id] : [];
   listEl.innerHTML = '';
   if (comments.length === 0) {
     const empty = document.createElement('li');
@@ -3312,7 +3859,7 @@ function createSharedTodoItem(todo, context) {
   toggleDoneBtn.dataset.sharedAction = 'toggle-done';
   actions.appendChild(toggleDoneBtn);
 
-  if (Number(authUser?.id) === Number(context.ownerUserId)) {
+  if (Number(runtime.authUser?.id) === Number(context.ownerUserId)) {
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'delete';
@@ -3412,7 +3959,7 @@ function renderSharedTodosForBucket(bucket) {
     return;
   }
 
-  const todos = Array.isArray(sharedTodosByContext[active.key]) ? sharedTodosByContext[active.key] : [];
+  const todos = Array.isArray(runtime.sharedTodosByContext[active.key]) ? runtime.sharedTodosByContext[active.key] : [];
   listEl.innerHTML = '';
   if (todos.length === 0) {
     const empty = document.createElement('li');
@@ -3432,17 +3979,17 @@ function renderCollabPanel() {
     return;
   }
 
-  const ready = isServerSync && !!authUser;
+  const ready = runtime.isServerSync && !!runtime.authUser;
   collabPanelEl.classList.toggle('is-disabled', !ready);
 
   if (collabProfileBadgeEl) {
-    const publicId = normalizePublicIdInput(collabProfile.publicId || authUser?.publicId || '');
+    const publicId = normalizePublicIdInput(runtime.collabProfile.publicId || runtime.authUser?.publicId || '');
     collabProfileBadgeEl.textContent = ready
       ? `내 고유ID: ${publicId ? `@${publicId}` : '미설정'}`
       : '로그인 후 공유 기능을 사용할 수 있습니다.';
   }
 
-  if (!ready || !collabSummary) {
+  if (!ready || !runtime.collabSummary) {
     if (collabInviteBucketSelectEl) {
       collabInviteBucketSelectEl.innerHTML = '';
       collabInviteBucketSelectEl.disabled = true;
@@ -3489,7 +4036,7 @@ function renderCollabPanel() {
   }
 
   if (collabReceivedInvitesEl) {
-    const received = Array.isArray(collabSummary.receivedInvites) ? collabSummary.receivedInvites : [];
+    const received = Array.isArray(runtime.collabSummary.receivedInvites) ? runtime.collabSummary.receivedInvites : [];
     collabReceivedInvitesEl.innerHTML = '';
     if (received.length === 0) {
       setSharedListEmpty(collabReceivedInvitesEl, '받은 초대가 없습니다.');
@@ -3521,7 +4068,7 @@ function renderCollabPanel() {
   }
 
   if (collabSentInvitesEl) {
-    const sent = Array.isArray(collabSummary.sentInvites) ? collabSummary.sentInvites : [];
+    const sent = Array.isArray(runtime.collabSummary.sentInvites) ? runtime.collabSummary.sentInvites : [];
     collabSentInvitesEl.innerHTML = '';
     if (sent.length === 0) {
       setSharedListEmpty(collabSentInvitesEl, '보낸 초대가 없습니다.');
@@ -3545,8 +4092,8 @@ function renderCollabPanel() {
   }
 
   if (collabMembershipListEl) {
-    const owned = Array.isArray(collabSummary.ownedBuckets) ? collabSummary.ownedBuckets : [];
-    const joined = Array.isArray(collabSummary.joinedBuckets) ? collabSummary.joinedBuckets : [];
+    const owned = Array.isArray(runtime.collabSummary.ownedBuckets) ? runtime.collabSummary.ownedBuckets : [];
+    const joined = Array.isArray(runtime.collabSummary.joinedBuckets) ? runtime.collabSummary.joinedBuckets : [];
     collabMembershipListEl.innerHTML = '';
 
     owned.forEach((entry) => {
@@ -3624,7 +4171,7 @@ async function toggleBucketShareSetting(bucket) {
   if (!targetBucket) {
     return;
   }
-  if (!isServerSync || !authUser) {
+  if (!runtime.isServerSync || !runtime.authUser) {
     showToast('로그인 후 사용할 수 있습니다.', 'error');
     return;
   }
@@ -3758,7 +4305,7 @@ async function submitSharedComposeForm(formEl) {
     dueDateEl.value = '';
   }
 
-  await refreshSharedTodosByContext(context);
+  await refreshCollabSnapshot();
   render();
 }
 
@@ -3804,7 +4351,7 @@ async function updateSharedTodoFromItem(itemEl, action) {
     showToast('다른 사용자가 먼저 수정했습니다. 새로고침합니다.', 'error');
     const context = parseCollabContextKey(found.contextKey);
     if (context) {
-      await refreshSharedTodosByContext(context);
+      await refreshCollabSnapshot();
     }
     render();
     return;
@@ -3816,7 +4363,7 @@ async function updateSharedTodoFromItem(itemEl, action) {
 
   const context = parseCollabContextKey(found.contextKey);
   if (context) {
-    await refreshSharedTodosByContext(context);
+    await refreshCollabSnapshot();
   }
   render();
 }
@@ -3836,7 +4383,7 @@ async function deleteSharedTodo(todoId) {
   if (found) {
     const context = parseCollabContextKey(found.contextKey);
     if (context) {
-      await refreshSharedTodosByContext(context);
+      await refreshCollabSnapshot();
     }
   } else {
     await refreshCollabSummary({ includeTodos: true });
@@ -3902,7 +4449,7 @@ async function toggleSharedCommentPanel(itemEl) {
     return;
   }
   const todoId = itemEl.dataset.todoId;
-  if (!Array.isArray(sharedCommentsByTodo[todoId])) {
+  if (!Array.isArray(runtime.sharedCommentsByTodo[todoId])) {
     await refreshSharedComments(todoId);
     render();
   }
@@ -3940,6 +4487,8 @@ function renderTodosByBucket() {
     ensureBucketShareToggle(bucket);
     renderSharedTodosForBucket(bucket);
   }
+
+  syncBucketActionMenus();
 }
 
 function countDailyStats(dateText) {
@@ -4184,11 +4733,11 @@ function renderSelectedDatePanel() {
 }
 
 function isCalendarTodoMode() {
-  return calendarMode === 'todo';
+  return runtime.calendarMode === 'todo';
 }
 
 function setCalendarMode(mode) {
-  calendarMode = mode === 'todo' ? 'todo' : 'note';
+  runtime.calendarMode = mode === 'todo' ? 'todo' : 'note';
   applyCalendarFormMode();
 }
 
@@ -4196,7 +4745,7 @@ function applyCalendarFormMode() {
   const isTodo = isCalendarTodoMode();
   calendarModeButtons.forEach((button) => {
     const buttonMode = button.dataset.calendarMode;
-    const isActive = buttonMode === calendarMode;
+    const isActive = buttonMode === runtime.calendarMode;
     button.classList.toggle('is-active', isActive);
     button.setAttribute('aria-pressed', String(isActive));
   });
@@ -4268,7 +4817,8 @@ function renderCalendar() {
   const month = state.currentMonth.getMonth();
   const compactCalendar = isCompactCalendarViewport();
   const yearText = String(year);
-  if (!HOLIDAYS_BY_YEAR[yearText]) {
+  const holidayEntry = HOLIDAYS_BY_YEAR[yearText];
+  if (!holidayEntry || holidayEntry.expiresAt <= Date.now()) {
     ensureHolidayDataForYear(year).finally(() => {
       render();
     });
@@ -4487,10 +5037,10 @@ function renderCalendar() {
   }
 }
 function registerEvents() {
-  if (eventsRegistered) {
+  if (runtime.eventsRegistered) {
     return;
   }
-  eventsRegistered = true;
+  runtime.eventsRegistered = true;
 
   registerBucketResizeObserver();
   registerBucketTitleEditors();
@@ -4708,8 +5258,8 @@ function registerEvents() {
       const profile = normalizeUserProfile(state.userProfile);
       profileNicknameInput.value = profile.nickname;
       profileHonorificInput.value = profile.honorific;
-      profilePublicIdInput.value = normalizePublicIdInput(collabProfile.publicId || authUser?.publicId || '');
-      profilePublicIdInput.disabled = !isServerSync;
+      profilePublicIdInput.value = normalizePublicIdInput(runtime.collabProfile.publicId || runtime.authUser?.publicId || '');
+      profilePublicIdInput.disabled = !runtime.isServerSync;
       profileEditorEl.classList.remove('hidden');
       toggleProfileEditorBtn.classList.add('is-active');
       toggleProfileEditorBtn.setAttribute('aria-expanded', 'true');
@@ -4733,9 +5283,9 @@ function registerEvents() {
       saveLocalState();
       queueSync(true);
 
-      if (isServerSync && authUser) {
+      if (runtime.isServerSync && runtime.authUser) {
         const nextPublicId = normalizePublicIdInput(profilePublicIdInput.value);
-        const currentPublicId = normalizePublicIdInput(collabProfile.publicId || authUser.publicId || '');
+        const currentPublicId = normalizePublicIdInput(runtime.collabProfile.publicId || runtime.authUser.publicId || '');
         if (nextPublicId !== currentPublicId) {
           const ok = await savePublicIdToServer(nextPublicId);
           if (!ok) {
@@ -4785,7 +5335,7 @@ function registerEvents() {
 
   if (authBtn) {
     authBtn.addEventListener('click', async () => {
-      if (!isServerSync) {
+      if (!runtime.isServerSync) {
         window.location.href = '/api/auth/kakao';
         return;
       }
@@ -4793,6 +5343,8 @@ function registerEvents() {
       try {
         await apiRequest('/auth/logout', {
           method: 'POST',
+          allowHttpStatus: [401],
+          suppressErrorToast: true,
           headers: {
             'x-csrf-token': getCookie('daycheck_csrf') || '',
           },
@@ -4843,9 +5395,9 @@ function registerEvents() {
       if (!context) {
         return;
       }
-      activeSharedContextByBucket[bucket] = context.key;
-      if (!Array.isArray(sharedTodosByContext[context.key])) {
-        refreshSharedTodosByContext(context)
+      runtime.activeSharedContextByBucket[bucket] = context.key;
+      if (!Array.isArray(runtime.sharedTodosByContext[context.key])) {
+        refreshCollabSnapshot()
           .then(() => {
             render();
           })
@@ -4926,39 +5478,39 @@ function registerEvents() {
 }
 
 function initializeRouteModules() {
-  routeModules = {
+  runtime.routeModules = {
     home: createTodoUi(),
     buckets: createBucketUi(),
     calendar: createCalendarUi(),
     report: createReportUi(),
   };
 
-  Object.entries(routeModules).forEach(([route, module]) => {
+  Object.entries(runtime.routeModules).forEach(([route, module]) => {
     const root = routeViewEls.find((viewEl) => viewEl.dataset.routeView === route) || null;
     module?.mount?.(root);
   });
 
-  authView = createAuthUi();
-  authView?.mount?.(appHeaderEl);
+  runtime.authView = createAuthUi();
+  runtime.authView?.mount?.(appHeaderEl);
 }
 
 function setupRouter() {
-  if (appRouter) {
+  if (runtime.appRouter) {
     return;
   }
 
   if (!routeOutletEl) {
-    currentRoute = 'home';
+    runtime.currentRoute = 'home';
     return;
   }
 
-  appRouter = createRouter({
+  runtime.appRouter = createRouter({
     routes: APP_ROUTES,
     storageKey: ROUTE_STORAGE_KEY,
     defaultRoute: 'home',
   });
 
-  appRouter.subscribe(({ route, direction }) => {
+  runtime.appRouter.subscribe(({ route, direction }) => {
     activateRoute(route, direction);
     render();
   });
@@ -4970,11 +5522,11 @@ function setupRouter() {
         return;
       }
       event.preventDefault();
-      appRouter.navigate(route);
+      runtime.appRouter.navigate(route);
     });
   });
 
-  appRouter.init();
+  runtime.appRouter.init();
 }
 
 function isIphoneLikeDevice() {
@@ -4998,11 +5550,11 @@ function syncViewportClasses() {
 
 function registerViewportClassSync() {
   syncViewportClasses();
-  if (viewportClassRegistered || typeof window === 'undefined') {
+  if (runtime.viewportClassRegistered || typeof window === 'undefined') {
     return;
   }
 
-  viewportClassRegistered = true;
+  runtime.viewportClassRegistered = true;
   window.addEventListener('resize', syncViewportClasses, { passive: true });
   window.addEventListener('orientationchange', syncViewportClasses);
 }
@@ -5052,22 +5604,23 @@ function registerServiceWorker() {
 }
 
 async function bootstrap() {
+  registerGlobalErrorBoundary();
   formatToday();
   registerViewportClassSync();
   registerStatePollingEvents();
+  await loadRuntimeMeta();
   state.selectedDate = state.selectedDate || toLocalIsoDate(new Date());
   loadStateFromLocal();
 
   await checkAuth();
 
-  if (isServerSync) {
+  if (runtime.isServerSync) {
     const serverState = await loadServerState();
     if (serverState) {
       const localBackup = {
         todos: [...state.todos],
         doneLog: [...state.doneLog],
         calendarItems: [...state.calendarItems],
-        categories: [...state.categories],
         bucketLabels: { ...state.bucketLabels },
         bucketOrder: [...state.bucketOrder],
         bucketVisibility: { ...state.bucketVisibility },
@@ -5088,7 +5641,7 @@ async function bootstrap() {
     await refreshCollabSummary({ includeTodos: true });
   }
 
-  ensureCategoryIntegrity();
+  ensureDataIntegrity();
   saveLocalState();
   ensureBucketColumns();
   ensureBucketSelectOptions();
@@ -5106,16 +5659,29 @@ async function bootstrap() {
   }
 }
 
-bootstrap().catch(() => {
-  registerViewportClassSync();
-  registerStatePollingEvents();
-  ensureBucketColumns();
-  ensureBucketSelectOptions();
-  initializeRouteModules();
-  setupRouter();
-  updateAuthUI();
-  registerEvents();
-  render();
+bootstrap().catch((error) => {
+  registerGlobalErrorBoundary();
+  console.error('[bootstrap]', error);
+
+  try {
+    registerViewportClassSync();
+    registerStatePollingEvents();
+    state.selectedDate = state.selectedDate || toLocalIsoDate(new Date());
+    loadStateFromLocal();
+    ensureDataIntegrity();
+    saveLocalState();
+    ensureBucketColumns();
+    ensureBucketSelectOptions();
+    initializeRouteModules();
+    setupRouter();
+    registerEvents();
+    updateAuthUI();
+    render();
+
+    showToast('초기화 중 일부 오류가 발생했지만 앱을 복구했습니다.', 'error');
+  } catch (fallbackError) {
+    handleFatalError(fallbackError);
+  }
 });
 
 registerServiceWorker();

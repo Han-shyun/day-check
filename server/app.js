@@ -22,10 +22,15 @@ function createHolidaysRouter() {
   return legacyServer.createHolidaysRouter();
 }
 
+function createCollabRouter() {
+  return legacyServer.createCollabRouter();
+}
+
 module.exports = {
   createApp,
   startServer,
   createAuthRouter,
   createStateRouter,
   createHolidaysRouter,
+  createCollabRouter,
 };

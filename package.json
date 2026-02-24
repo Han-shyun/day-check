@@ -1,32 +1,35 @@
 {
-    "name":  "day-check",
-    "version":  "1.0.0",
-    "private":  true,
-    "type":  "commonjs",
-    "scripts":  {
-                    "start":       "node server.js",
-                    "start:modular": "node server/index.js",
-                    "dev":         "vite",
-                    "dev:server":  "node --watch server.js",
-                    "dev:server:modular": "node --watch server/index.js",
-                    "server:start": "npm run start",
-                    "server:dev": "npm run dev:server",
-                    "server:restart": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-server.ps1",
-                    "server:restart:prod": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-server.ps1 -Production",
-                    "check:text":  "node scripts/check-text.js",
-                    "build":       "npm run check:text && vite build",
-                    "preview":     "vite preview --port 4173"
-                },
-    "dependencies":  {
-                         "cookie-parser":  "^1.4.6",
-                         "express":  "^4.19.2",
-                         "express-rate-limit":  "^7.5.0",
-                         "helmet":  "^8.0.0",
-                         "sqlite3":  "^5.1.7",
-                         "dotenv":  "^16.4.7"
-                     },
-    "devDependencies":  {
-                           "vite": "^6.0.0"
-                     }
+    "name": "day-check",
+    "version": "1.0.0",
+    "private": true,
+    "type": "commonjs",
+    "scripts": {
+        "start": "node server.js",
+        "start:modular": "node server/index.js",
+        "dev": "vite",
+        "dev:server": "node --watch server.js",
+        "dev:server:modular": "node --watch server/index.js",
+        "server:start": "npm run start",
+        "server:dev": "npm run dev:server",
+        "server:restart": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-server.ps1",
+        "server:restart:prod": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-server.ps1 -Production",
+        "check:text": "node scripts/check-text.js",
+        "test": "vitest",
+        "test:run": "vitest run",
+        "build": "npm run check:text && vite build",
+        "preview": "vite preview --port 4173"
+    },
+    "dependencies": {
+        "cookie-parser": "^1.4.6",
+        "dotenv": "^16.4.7",
+        "express": "^4.19.2",
+        "express-rate-limit": "^7.5.0",
+        "helmet": "^8.0.0",
+        "sqlite3": "^5.1.7"
+    },
+    "devDependencies": {
+        "supertest": "^7.2.2",
+        "vite": "^6.0.0",
+        "vitest": "^4.0.18"
+    }
 }
-

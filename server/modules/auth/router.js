@@ -86,6 +86,7 @@ function createAuthRouter(options = {}) {
         nickname: user.nickname,
         email: user.email,
         profileImage: user.profile_image,
+        publicId: user.public_id || null,
       },
       lastLoginAt: user.last_login_at || null,
     });

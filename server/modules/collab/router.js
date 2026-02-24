@@ -1,6 +1,7 @@
 'use strict';
 
 const { Router } = require('express');
+const rateLimit = require('express-rate-limit');
 const { CollabError } = require('./service');
 
 module.exports = {
@@ -8,6 +9,8 @@ module.exports = {
     const {
       validateCsrf = (_req, _res, next) => next(),
       service,
+      writeWindowMs = 60 * 1000,
+      writeLimit = 10,
     } = options;
 
     if (!service) {
@@ -15,6 +18,14 @@ module.exports = {
     }
 
     const router = Router();
+    const writeRateLimit = rateLimit({
+      windowMs: writeWindowMs,
+      limit: writeLimit,
+      standardHeaders: true,
+      legacyHeaders: false,
+      message: { error: 'too_many_requests' },
+    });
+    const withWriteGuard = [writeRateLimit, validateCsrf];
     const wrap = (handler) => async (req, res, next) => {
       try {
         await handler(req, res, next);
@@ -37,42 +48,52 @@ module.exports = {
       }
     };
 
+    router.get('/snapshot', wrap(async (req, res) => {
+      const commentTodoIds = String(req.query.commentTodoIds || '')
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 40);
+      const snapshot = await service.getSnapshot(req.auth.userId, { commentTodoIds });
+      res.json(snapshot);
+    }));
+
     router.get('/summary', wrap(async (req, res) => {
       const summary = await service.getSummary(req.auth.userId);
       res.json(summary);
     }));
 
-    router.put('/public-id', validateCsrf, wrap(async (req, res) => {
+    router.put('/public-id', ...withWriteGuard, wrap(async (req, res) => {
       const result = await service.setPublicId(req.auth.userId, req.body || {});
       res.json(result);
     }));
 
-    router.put('/share-settings/:bucketKey', validateCsrf, wrap(async (req, res) => {
+    router.put('/share-settings/:bucketKey', ...withWriteGuard, wrap(async (req, res) => {
       const result = await service.setShareSetting(req.auth.userId, req.params.bucketKey, req.body || {});
       res.json(result);
     }));
 
-    router.post('/invites', validateCsrf, wrap(async (req, res) => {
+    router.post('/invites', ...withWriteGuard, wrap(async (req, res) => {
       const invite = await service.createInvite(req.auth.userId, req.body || {});
       res.status(201).json({ invite });
     }));
 
-    router.post('/invites/:inviteId/accept', validateCsrf, wrap(async (req, res) => {
+    router.post('/invites/:inviteId/accept', ...withWriteGuard, wrap(async (req, res) => {
       const payload = await service.acceptInvite(req.auth.userId, req.params.inviteId);
       res.json(payload);
     }));
 
-    router.post('/invites/:inviteId/decline', validateCsrf, wrap(async (req, res) => {
+    router.post('/invites/:inviteId/decline', ...withWriteGuard, wrap(async (req, res) => {
       const invite = await service.declineInvite(req.auth.userId, req.params.inviteId);
       res.json({ invite });
     }));
 
-    router.delete('/invites/:inviteId', validateCsrf, wrap(async (req, res) => {
+    router.delete('/invites/:inviteId', ...withWriteGuard, wrap(async (req, res) => {
       const result = await service.cancelInvite(req.auth.userId, req.params.inviteId);
       res.json(result);
     }));
 
-    router.delete('/memberships/:membershipId', validateCsrf, wrap(async (req, res) => {
+    router.delete('/memberships/:membershipId', ...withWriteGuard, wrap(async (req, res) => {
       const result = await service.removeMembership(req.auth.userId, req.params.membershipId);
       res.json(result);
     }));
@@ -86,7 +107,7 @@ module.exports = {
       res.json({ todos });
     }));
 
-    router.post('/shares/:ownerUserId/:bucketKey/todos', validateCsrf, wrap(async (req, res) => {
+    router.post('/shares/:ownerUserId/:bucketKey/todos', ...withWriteGuard, wrap(async (req, res) => {
       const todo = await service.createSharedTodo(
         req.auth.userId,
         req.params.ownerUserId,
@@ -96,12 +117,12 @@ module.exports = {
       res.status(201).json({ todo });
     }));
 
-    router.patch('/shared-todos/:todoId', validateCsrf, wrap(async (req, res) => {
+    router.patch('/shared-todos/:todoId', ...withWriteGuard, wrap(async (req, res) => {
       const todo = await service.updateSharedTodo(req.auth.userId, req.params.todoId, req.body || {});
       res.json({ todo });
     }));
 
-    router.delete('/shared-todos/:todoId', validateCsrf, wrap(async (req, res) => {
+    router.delete('/shared-todos/:todoId', ...withWriteGuard, wrap(async (req, res) => {
       const result = await service.deleteSharedTodo(req.auth.userId, req.params.todoId);
       res.json(result);
     }));
@@ -111,12 +132,12 @@ module.exports = {
       res.json({ comments });
     }));
 
-    router.post('/shared-todos/:todoId/comments', validateCsrf, wrap(async (req, res) => {
+    router.post('/shared-todos/:todoId/comments', ...withWriteGuard, wrap(async (req, res) => {
       const comment = await service.createComment(req.auth.userId, req.params.todoId, req.body || {});
       res.status(201).json({ comment });
     }));
 
-    router.delete('/comments/:commentId', validateCsrf, wrap(async (req, res) => {
+    router.delete('/comments/:commentId', ...withWriteGuard, wrap(async (req, res) => {
       const result = await service.deleteComment(req.auth.userId, req.params.commentId);
       res.json(result);
     }));

@@ -74,16 +74,37 @@ jobs:
           ssh-keygen -lf ~/.ssh/deploy_key || true
 
           PORT="${SSH_PORT:-22}"
-          if ! ssh-keyscan -T 8 -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+          keyscan_ok=false
+          for attempt in 1 2 3; do
+            if ssh-keyscan -T 30 -p "$PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null; then
+              keyscan_ok=true
+              break
+            fi
+            echo "[deploy] ssh-keyscan retry ${attempt}/3 failed"
+            sleep 3
+          done
+          if [ "$keyscan_ok" != "true" ]; then
             echo "::error title=SSH host unreachable::ssh-keyscan failed for ${SSH_HOST}:${PORT}"
             exit 1
           fi
           chmod 600 ~/.ssh/known_hosts
-          ssh -vv -i ~/.ssh/deploy_key -p "$PORT" \
-            -o BatchMode=yes \
-            -o ConnectTimeout=8 \
-            -o StrictHostKeyChecking=yes \
-            "${SSH_USER}@${SSH_HOST}" "echo '[deploy] ssh handshake ok'"
+          ssh_ok=false
+          for attempt in 1 2 3; do
+            if ssh -vv -i ~/.ssh/deploy_key -p "$PORT" \
+              -o BatchMode=yes \
+              -o ConnectTimeout=30 \
+              -o StrictHostKeyChecking=yes \
+              "${SSH_USER}@${SSH_HOST}" "echo '[deploy] ssh handshake ok'"; then
+              ssh_ok=true
+              break
+            fi
+            echo "[deploy] ssh handshake retry ${attempt}/3 failed"
+            sleep 3
+          done
+          if [ "$ssh_ok" != "true" ]; then
+            echo "::error title=SSH handshake failed::Unable to connect to ${SSH_HOST}:${PORT}"
+            exit 1
+          fi
 
       - name: Sync project files
         env:

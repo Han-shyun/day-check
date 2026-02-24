@@ -1,4 +1,4 @@
-const express = require('express');
+﻿const express = require('express');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
@@ -18,19 +18,72 @@ const CSRF_COOKIE = 'daycheck_csrf';
 const SECURITY_EVENT_PREFIX = 'daycheck_security_event';
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_ABSOLUTE_TTL_DEFAULT_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_ABSOLUTE_TTL_RAW = Number(process.env.SESSION_ABSOLUTE_TTL_MS || SESSION_ABSOLUTE_TTL_DEFAULT_MS);
+const SESSION_ABSOLUTE_TTL_MS =
+  Number.isFinite(SESSION_ABSOLUTE_TTL_RAW) && SESSION_ABSOLUTE_TTL_RAW > 0
+    ? SESSION_ABSOLUTE_TTL_RAW
+    : SESSION_ABSOLUTE_TTL_DEFAULT_MS;
 const OAUTH_STATE_TTL_MS = 5 * 60 * 1000;
 const IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
 const OAUTH_REFRESH_SKEW_MS = 60 * 1000;
 const SECURITY_EVENT_LOG_PATH = process.env.SECURITY_EVENT_LOG_PATH || path.resolve(process.cwd(), 'security-events.log');
+const SECURITY_EVENT_LOG_MAX_DEFAULT_BYTES = 10 * 1024 * 1024;
+const SECURITY_EVENT_LOG_MAX_RAW = Number(
+  process.env.SECURITY_EVENT_LOG_MAX_BYTES || SECURITY_EVENT_LOG_MAX_DEFAULT_BYTES,
+);
+const SECURITY_EVENT_LOG_MAX_BYTES =
+  Number.isFinite(SECURITY_EVENT_LOG_MAX_RAW) && SECURITY_EVENT_LOG_MAX_RAW > 0
+    ? SECURITY_EVENT_LOG_MAX_RAW
+    : SECURITY_EVENT_LOG_MAX_DEFAULT_BYTES;
 const SECURITY_EVENTS_ENABLED = process.env.SECURITY_EVENTS_ENABLED !== 'false';
-const SESSION_ENCRYPTION_KEY_CONFIGURED = Boolean(process.env.SESSION_ENCRYPTION_KEY);
 const HOLIDAY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const HOLIDAY_FETCH_TIMEOUT_MS = 12_000;
-const HOLIDAY_FALLBACK_FEED_URL = 'https://calendar.google.com/calendar/ical/ko.south_korea%23holiday%40group.v.calendar.google.com/public/basic.ics';
-const HOLIDAY_FEED_URL =
-  process.env.HOLIDAY_FEED_URL || process.env.NAVER_HOLIDAY_FEED_URL || HOLIDAY_FALLBACK_FEED_URL;
+const HOLIDAY_API_PROVIDER = String(process.env.HOLIDAY_API_PROVIDER || 'public_data_portal').trim().toLowerCase();
+const HOLIDAY_API_SERVICE_KEY = String(process.env.HOLIDAY_API_SERVICE_KEY || '').trim();
+const HOLIDAY_API_BASE_URL =
+  String(process.env.HOLIDAY_API_BASE_URL || '').trim() ||
+  'https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo';
+const HOLIDAY_FEED_FALLBACK_URL =
+  String(process.env.HOLIDAY_FEED_URL || process.env.NAVER_HOLIDAY_FEED_URL || '').trim() ||
+  'https://calendar.google.com/calendar/ical/ko.south_korea%23holiday%40group.v.calendar.google.com/public/basic.ics';
+const HOLIDAY_CLIENT_CACHE_TTL_MS_DEFAULT = 24 * 60 * 60 * 1000;
+const HOLIDAY_CLIENT_CACHE_TTL_MS_RAW = Number(
+  process.env.HOLIDAY_CLIENT_CACHE_TTL_MS || HOLIDAY_CLIENT_CACHE_TTL_MS_DEFAULT,
+);
+const HOLIDAY_CLIENT_CACHE_TTL_MS =
+  Number.isFinite(HOLIDAY_CLIENT_CACHE_TTL_MS_RAW) && HOLIDAY_CLIENT_CACHE_TTL_MS_RAW > 0
+    ? HOLIDAY_CLIENT_CACHE_TTL_MS_RAW
+    : HOLIDAY_CLIENT_CACHE_TTL_MS_DEFAULT;
+const POLL_STATE_ACTIVE_MS_DEFAULT = 4000;
+const POLL_STATE_HIDDEN_MS_DEFAULT = 20000;
+const POLL_COLLAB_ACTIVE_MS_DEFAULT = 6000;
+const POLL_COLLAB_HIDDEN_MS_DEFAULT = 30000;
+const POLL_STATE_ACTIVE_MS = Number(process.env.POLL_STATE_ACTIVE_MS || POLL_STATE_ACTIVE_MS_DEFAULT) > 0
+  ? Number(process.env.POLL_STATE_ACTIVE_MS || POLL_STATE_ACTIVE_MS_DEFAULT)
+  : POLL_STATE_ACTIVE_MS_DEFAULT;
+const POLL_STATE_HIDDEN_MS = Number(process.env.POLL_STATE_HIDDEN_MS || POLL_STATE_HIDDEN_MS_DEFAULT) > 0
+  ? Number(process.env.POLL_STATE_HIDDEN_MS || POLL_STATE_HIDDEN_MS_DEFAULT)
+  : POLL_STATE_HIDDEN_MS_DEFAULT;
+const POLL_COLLAB_ACTIVE_MS = Number(process.env.POLL_COLLAB_ACTIVE_MS || POLL_COLLAB_ACTIVE_MS_DEFAULT) > 0
+  ? Number(process.env.POLL_COLLAB_ACTIVE_MS || POLL_COLLAB_ACTIVE_MS_DEFAULT)
+  : POLL_COLLAB_ACTIVE_MS_DEFAULT;
+const POLL_COLLAB_HIDDEN_MS = Number(process.env.POLL_COLLAB_HIDDEN_MS || POLL_COLLAB_HIDDEN_MS_DEFAULT) > 0
+  ? Number(process.env.POLL_COLLAB_HIDDEN_MS || POLL_COLLAB_HIDDEN_MS_DEFAULT)
+  : POLL_COLLAB_HIDDEN_MS_DEFAULT;
 const HOLIDAY_CACHE = new Map();
 const HOLIDAY_FETCH_INFLIGHT = new Map();
+const MOJIBAKE_MARKERS = [
+  '\u003F\uAFA8',
+  '\u003F\uBA83',
+  '\u003F\uACD7',
+  '\u003F\uB181',
+  '\u6FE1\uC493',
+  '\u907A\uAFA8',
+  '\u79FB\uB301',
+  '\u8E30\uAFAA\uADA5',
+  '\u7337\u2466',
+];
 let USERS_REQUIRE_NAVER_ID = false;
 
 function getSecureEncryptionKey() {
@@ -67,6 +120,49 @@ function getSecureEncryptionKey() {
 
 const SESSION_TOKEN_ENCRYPTION_KEY = getSecureEncryptionKey();
 
+function validateRequiredSecurityConfig() {
+  const sessionEncryptionKey = String(process.env.SESSION_ENCRYPTION_KEY || '').trim();
+  if (!sessionEncryptionKey) {
+    console.error('[security] SESSION_ENCRYPTION_KEY is required.');
+    throw new Error('missing_SESSION_ENCRYPTION_KEY');
+  }
+
+  if (!SESSION_TOKEN_ENCRYPTION_KEY) {
+    console.error(
+      '[security] SESSION_ENCRYPTION_KEY is invalid. Must be a 32-byte base64/hex/utf8 string.',
+    );
+    throw new Error('invalid_SESSION_ENCRYPTION_KEY');
+  }
+}
+
+function rotateSecurityEventLogIfNeeded() {
+  if (!Number.isFinite(SECURITY_EVENT_LOG_MAX_BYTES) || SECURITY_EVENT_LOG_MAX_BYTES <= 0) {
+    return;
+  }
+
+  try {
+    const stat = fs.statSync(SECURITY_EVENT_LOG_PATH);
+    if (!stat.isFile() || stat.size < SECURITY_EVENT_LOG_MAX_BYTES) {
+      return;
+    }
+
+    const backupPath = `${SECURITY_EVENT_LOG_PATH}.1`;
+    try {
+      if (fs.existsSync(backupPath)) {
+        fs.unlinkSync(backupPath);
+      }
+    } catch (error) {
+      console.error('[security] failed to remove previous security log backup', error);
+    }
+    fs.renameSync(SECURITY_EVENT_LOG_PATH, backupPath);
+  } catch (error) {
+    if (!error || error.code === 'ENOENT') {
+      return;
+    }
+    console.error('[security] failed to rotate security log file', error);
+  }
+}
+
 function logSecurityEvent(eventCode, details = {}) {
   if (!SECURITY_EVENTS_ENABLED) {
     return;
@@ -85,9 +181,10 @@ function logSecurityEvent(eventCode, details = {}) {
 
   console.warn(`[${SECURITY_EVENT_PREFIX}] ${text}`);
   try {
+    rotateSecurityEventLogIfNeeded();
     fs.appendFileSync(SECURITY_EVENT_LOG_PATH, `${text}\n`, 'utf8');
-  } catch {
-    // best-effort logging
+  } catch (error) {
+    console.error('[security] failed to write security log', error);
   }
 }
 
@@ -277,8 +374,8 @@ function parseJsonHolidays(text, year) {
   return holidays;
 }
 
-function normalizeHolidaySourceUrl(year) {
-  const rawUrl = safeTrim(HOLIDAY_FEED_URL);
+function normalizeHolidaySourceUrl(year, rawCandidate = '') {
+  const rawUrl = safeTrim(rawCandidate);
   if (!rawUrl) {
     return '';
   }
@@ -296,21 +393,73 @@ function shouldNormalizeByYear(key, year) {
   return typeof key === 'string' && key.startsWith(`${year}-`);
 }
 
-async function fetchHolidaysFromNaver(year) {
-  const sourceUrl = normalizeHolidaySourceUrl(year);
-  if (!sourceUrl) {
+function normalizeHolidayDateCandidate(rawDate) {
+  const parsed = parseDateFromUnknown(rawDate);
+  return /^\d{4}-\d{2}-\d{2}$/.test(parsed) ? parsed : '';
+}
+
+function parsePublicDataPortalHolidays(payload, year) {
+  const yearText = String(year);
+  const candidates = [
+    payload?.response?.body?.items?.item,
+    payload?.response?.body?.item,
+    payload?.body?.items?.item,
+    payload?.items?.item,
+    payload?.items,
+  ];
+  let items = [];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      items = candidate;
+      break;
+    }
+    if (candidate && typeof candidate === 'object') {
+      items = [candidate];
+      break;
+    }
+  }
+
+  const holidays = {};
+  items.forEach((item) => {
+    if (!item || typeof item !== 'object') {
+      return;
+    }
+    const isHoliday = String(item.isHoliday || item.holidayYn || '').toUpperCase();
+    if (isHoliday && isHoliday !== 'Y') {
+      return;
+    }
+
+    const dateText = normalizeHolidayDateCandidate(item.locdate || item.dateName || item.date || '');
+    if (!dateText || !dateText.startsWith(`${yearText}-`)) {
+      return;
+    }
+
+    const name = safeTrim(item.dateName || item.holidayName || item.name || item.title || '');
+    if (!name) {
+      return;
+    }
+    holidays[dateText] = name;
+  });
+
+  return holidays;
+}
+
+async function fetchHolidaysFromFeed(year, sourceUrl, provider = 'holiday_feed') {
+  const normalizedSourceUrl = safeTrim(sourceUrl);
+  if (!normalizedSourceUrl) {
     return {
       year,
       holidays: {},
       fallback: true,
       reason: 'source_not_configured',
       source: '',
+      provider,
     };
   }
 
   const { controller, timeout } = withTimeout(HOLIDAY_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(sourceUrl, {
+    const response = await fetch(normalizedSourceUrl, {
       redirect: 'follow',
       signal: controller.signal,
     });
@@ -321,7 +470,8 @@ async function fetchHolidaysFromNaver(year) {
         holidays: {},
         fallback: true,
         reason: `http_${response.status}`,
-        source: sourceUrl,
+        source: normalizedSourceUrl,
+        provider,
       };
     }
 
@@ -333,7 +483,8 @@ async function fetchHolidaysFromNaver(year) {
         holidays: {},
         fallback: true,
         reason: 'empty_response',
-        source: sourceUrl,
+        source: normalizedSourceUrl,
+        provider,
       };
     }
 
@@ -352,7 +503,96 @@ async function fetchHolidaysFromNaver(year) {
       year,
       holidays,
       fallback: false,
+      source: normalizedSourceUrl,
+      provider,
+    };
+  } catch (error) {
+    return {
+      year,
+      holidays: {},
+      fallback: true,
+      reason: error && error.name === 'AbortError' ? 'timeout' : 'fetch_failed',
+      source: normalizedSourceUrl,
+      provider,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchHolidaysFromPublicDataPortal(year) {
+  if (!HOLIDAY_API_SERVICE_KEY) {
+    return {
+      year,
+      holidays: {},
+      fallback: true,
+      reason: 'missing_service_key',
+      source: HOLIDAY_API_BASE_URL,
+      provider: 'public_data_portal',
+    };
+  }
+
+  const params = new URLSearchParams({
+    ServiceKey: HOLIDAY_API_SERVICE_KEY,
+    solYear: String(year),
+    numOfRows: '100',
+    pageNo: '1',
+    _type: 'json',
+  });
+  const sourceUrl = `${HOLIDAY_API_BASE_URL}?${params.toString()}`;
+  const { controller, timeout } = withTimeout(HOLIDAY_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(sourceUrl, {
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return {
+        year,
+        holidays: {},
+        fallback: true,
+        reason: `http_${response.status}`,
+        source: sourceUrl,
+        provider: 'public_data_portal',
+      };
+    }
+
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    if (!payload || typeof payload !== 'object') {
+      return {
+        year,
+        holidays: {},
+        fallback: true,
+        reason: 'invalid_json',
+        source: sourceUrl,
+        provider: 'public_data_portal',
+      };
+    }
+
+    const resultCode =
+      safeTrim(payload?.response?.header?.resultCode || payload?.header?.resultCode || payload?.resultCode || '');
+    if (resultCode && resultCode !== '00') {
+      return {
+        year,
+        holidays: {},
+        fallback: true,
+        reason: `api_${resultCode}`,
+        source: sourceUrl,
+        provider: 'public_data_portal',
+      };
+    }
+
+    return {
+      year,
+      holidays: parsePublicDataPortalHolidays(payload, year),
+      fallback: false,
       source: sourceUrl,
+      provider: 'public_data_portal',
     };
   } catch (error) {
     return {
@@ -361,10 +601,38 @@ async function fetchHolidaysFromNaver(year) {
       fallback: true,
       reason: error && error.name === 'AbortError' ? 'timeout' : 'fetch_failed',
       source: sourceUrl,
+      provider: 'public_data_portal',
     };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchHolidaysByProvider(year) {
+  if (HOLIDAY_API_PROVIDER === 'public_data_portal') {
+    const primary = await fetchHolidaysFromPublicDataPortal(year);
+    if (!primary.fallback && Object.keys(primary.holidays || {}).length > 0) {
+      return primary;
+    }
+
+    const fallbackUrl = normalizeHolidaySourceUrl(year, HOLIDAY_FEED_FALLBACK_URL);
+    const fallback = await fetchHolidaysFromFeed(year, fallbackUrl, 'google_ics_fallback');
+    if (!fallback.fallback) {
+      return {
+        ...fallback,
+        fallback: true,
+        reason: primary?.reason || 'fallback_feed',
+      };
+    }
+    return {
+      ...fallback,
+      fallback: true,
+      reason: `${primary?.reason || 'provider_failed'};${fallback.reason || 'fallback_failed'}`,
+    };
+  }
+
+  const sourceUrl = normalizeHolidaySourceUrl(year, HOLIDAY_FEED_FALLBACK_URL);
+  return fetchHolidaysFromFeed(year, sourceUrl, 'holiday_feed');
 }
 
 async function getHolidaysByYear(year) {
@@ -378,7 +646,7 @@ async function getHolidaysByYear(year) {
     return HOLIDAY_FETCH_INFLIGHT.get(key);
   }
 
-  const payload = fetchHolidaysFromNaver(year)
+  const payload = fetchHolidaysByProvider(year)
     .then((result) => {
       const holidayMap = {};
       const source = result?.holidays || {};
@@ -395,6 +663,7 @@ async function getHolidaysByYear(year) {
           year,
           holidays: holidayMap,
           source: result?.source || '',
+          provider: result?.provider || '',
           fallback: result?.fallback === true,
           reason: result?.reason || '',
         },
@@ -464,6 +733,18 @@ if (!fs.existsSync(DB_DIR)) {
   fs.mkdirSync(DB_DIR, { recursive: true });
 }
 const db = new sqlite3.Database(DB_PATH);
+db.serialize(() => {
+  db.run('PRAGMA foreign_keys = ON', (error) => {
+    if (error) {
+      console.error('[db] failed to enable foreign_keys pragma', error);
+    }
+  });
+  db.run('PRAGMA journal_mode = WAL', (error) => {
+    if (error) {
+      console.error('[db] failed to enable WAL mode', error);
+    }
+  });
+});
 
 function run(query, params = []) {
   return new Promise((resolve, reject) => {
@@ -497,6 +778,18 @@ function all(query, params = []) {
         return;
       }
       resolve(rows || []);
+    });
+  });
+}
+
+function closeDatabase() {
+  return new Promise((resolve, reject) => {
+    db.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
     });
   });
 }
@@ -886,8 +1179,62 @@ function saveIdempotencyRecord(key, requestHash, response) {
   );
 }
 
-function ensureDatabase() {
-  return run(`
+let latestSchemaMigrationVersion = 0;
+
+function ensureMigrationsTable() {
+  return run(
+    `
+      CREATE TABLE IF NOT EXISTS db_migrations (
+        version INTEGER PRIMARY KEY,
+        description TEXT NOT NULL,
+        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `,
+  );
+}
+
+async function runInTransaction(work) {
+  await run('BEGIN IMMEDIATE');
+  try {
+    const result = await work();
+    await run('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      await run('ROLLBACK');
+    } catch {
+      // ignore rollback errors
+    }
+    throw error;
+  }
+}
+
+async function applyDatabaseMigration({ version, description, up }) {
+  await runInTransaction(async () => {
+    const existing = await get('SELECT version FROM db_migrations WHERE version = ?', [version]);
+    if (existing) {
+      return;
+    }
+
+    await up();
+    await run(
+      `
+        INSERT INTO db_migrations (version, description, applied_at)
+        VALUES (?, ?, datetime('now'))
+      `,
+      [version, description],
+    );
+  });
+}
+
+async function loadLatestMigrationVersion() {
+  const row = await get('SELECT COALESCE(MAX(version), 0) AS version FROM db_migrations');
+  latestSchemaMigrationVersion = Number(row?.version || 0);
+  return latestSchemaMigrationVersion;
+}
+
+async function createBaseTablesAndIndexes() {
+  await run(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       kakao_id TEXT NOT NULL UNIQUE,
@@ -898,61 +1245,84 @@ function ensureDatabase() {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_login_at TEXT
     )
-  `)
-    .then(() =>
-      run(`
-        CREATE TABLE IF NOT EXISTS user_states (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          user_id INTEGER NOT NULL UNIQUE,
-          state_json TEXT NOT NULL DEFAULT '{}',
-          version INTEGER NOT NULL DEFAULT 1,
-          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-          created_at TEXT NOT NULL DEFAULT (datetime('now')),
-          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-      `),
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS user_states (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL UNIQUE,
+      state_json TEXT NOT NULL DEFAULT '{}',
+      version INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
-    .then(() =>
-      run(`
-        CREATE TABLE IF NOT EXISTS user_sessions (
-          session_id TEXT PRIMARY KEY,
-          user_id INTEGER NOT NULL,
-          csrf_token TEXT NOT NULL,
-          kakao_access_token TEXT,
-          kakao_refresh_token TEXT,
-          kakao_token_expires_at INTEGER,
-          created_at INTEGER NOT NULL,
-          expires_at INTEGER NOT NULL,
-          FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-        )
-      `),
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      session_id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      csrf_token TEXT NOT NULL,
+      kakao_access_token TEXT,
+      kakao_refresh_token TEXT,
+      kakao_token_expires_at INTEGER,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
-    .then(() =>
-      run(`
-        CREATE TABLE IF NOT EXISTS oauth_states (
-          state TEXT PRIMARY KEY,
-          created_at INTEGER NOT NULL,
-          ip TEXT
-        )
-      `),
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS oauth_states (
+      state TEXT PRIMARY KEY,
+      created_at INTEGER NOT NULL,
+      ip TEXT
     )
-    .then(() =>
-      run(`
-        CREATE TABLE IF NOT EXISTS idempotency_store (
-          idempotency_key TEXT PRIMARY KEY,
-          request_hash TEXT NOT NULL,
-          response_json TEXT NOT NULL,
-          expires_at INTEGER NOT NULL
-        )
-      `),
+  `);
+  await run(`
+    CREATE TABLE IF NOT EXISTS idempotency_store (
+      idempotency_key TEXT PRIMARY KEY,
+      request_hash TEXT NOT NULL,
+      response_json TEXT NOT NULL,
+      expires_at INTEGER NOT NULL
     )
-    .then(() => run('CREATE INDEX IF NOT EXISTS idx_user_states_user_id ON user_states(user_id)'))
-    .then(() => run('CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at)'))
-    .then(() => run('CREATE INDEX IF NOT EXISTS idx_oauth_states_created_at ON oauth_states(created_at)'))
-    .then(() => run('CREATE INDEX IF NOT EXISTS idx_idempotency_expires_at ON idempotency_store(expires_at)'))
-    .then(() => ensureUsersSchema())
-    .then(() => ensureStateSchemas())
-    .then(() => ensureCollabSchemas());
+  `);
+
+  await run('CREATE INDEX IF NOT EXISTS idx_user_states_user_id ON user_states(user_id)');
+  await run('CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at)');
+  await run('CREATE INDEX IF NOT EXISTS idx_oauth_states_created_at ON oauth_states(created_at)');
+  await run('CREATE INDEX IF NOT EXISTS idx_idempotency_expires_at ON idempotency_store(expires_at)');
+
+  await ensureUsersSchema();
+  await ensureStateSchemas();
+}
+
+async function ensureDatabase() {
+  await ensureMigrationsTable();
+
+  await applyDatabaseMigration({
+    version: 1,
+    description: 'baseline_auth_state_schema',
+    up: async () => {
+      await createBaseTablesAndIndexes();
+    },
+  });
+
+  await applyDatabaseMigration({
+    version: 2,
+    description: 'collab_schema',
+    up: async () => {
+      await ensureCollabSchemas();
+    },
+  });
+
+  await applyDatabaseMigration({
+    version: 3,
+    description: 'security_and_poll_meta',
+    up: async () => {
+      await run('CREATE INDEX IF NOT EXISTS idx_idempotency_updated_at ON idempotency_store(updated_at)');
+    },
+  });
+
+  await loadLatestMigrationVersion();
 }
 
 const BUCKET_KEYS = ['bucket1', 'bucket2', 'bucket3', 'bucket4', 'bucket5', 'bucket6', 'bucket7', 'bucket8'];
@@ -968,6 +1338,9 @@ const DEFAULT_USER_PROFILE = Object.freeze({
   nickname: '',
   honorific: '님',
 });
+function findBrokenTextMarker(text) {
+  return MOJIBAKE_MARKERS.find((marker) => text.includes(marker)) || '';
+}
 
 function hasBrokenText(value) {
   const text = String(value || '');
@@ -977,43 +1350,206 @@ function hasBrokenText(value) {
   if (/[\uFFFD]/u.test(text)) {
     return true;
   }
-  return /\?[^\s"'`<>()[\]{}=]{1,3}/u.test(text);
+  return Boolean(findBrokenTextMarker(text));
+}
+
+function normalizeIsoDateOnly(rawValue) {
+  const parsed = parseDateFromUnknown(rawValue);
+  return /^\d{4}-\d{2}-\d{2}$/.test(parsed) ? parsed : '';
+}
+
+function normalizeUtcTimestamp(rawValue, fallback = '') {
+  const fallbackValue = fallback || new Date().toISOString();
+  if (rawValue == null || rawValue === '') {
+    return fallbackValue;
+  }
+  const parsed = new Date(rawValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return fallbackValue;
+  }
+  return parsed.toISOString();
+}
+
+function normalizeTodoSubtasksForState(input) {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => ({
+      id: typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : crypto.randomUUID(),
+      text: String(entry.text || entry.title || '').trim().slice(0, 120),
+      done: Boolean(entry.done || entry.completed),
+      createdAt: normalizeUtcTimestamp(entry.createdAt),
+    }))
+    .filter((entry) => Boolean(entry.text));
+}
+
+function normalizeTodoMemosForState(input) {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+  return input
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => ({
+      id: typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : crypto.randomUUID(),
+      text: String(entry.text || '').trim().slice(0, 1200),
+      createdAt: normalizeUtcTimestamp(entry.createdAt),
+    }))
+    .filter((entry) => Boolean(entry.text));
+}
+
+function normalizeTodoCollection(input = [], options = {}) {
+  const { includeCompletedAt = false, includeLegacyCategory = false } = options;
+  const source = Array.isArray(input) ? input : [];
+  return source
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => {
+      const title = String(entry.title || '').trim().slice(0, 120);
+      const createdAt = normalizeUtcTimestamp(entry.createdAt);
+      const dueDate = normalizeIsoDateOnly(entry.dueDate);
+      const priorityRaw = Number(entry.priority || 2);
+      const priority = Number.isInteger(priorityRaw) && priorityRaw >= 1 && priorityRaw <= 3 ? priorityRaw : 2;
+      const bucket = typeof entry.bucket === 'string' && BUCKET_KEYS.includes(entry.bucket) ? entry.bucket : 'bucket4';
+      const normalized = {
+        id: typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : crypto.randomUUID(),
+        title,
+        details: String(entry.details || entry.description || '').slice(0, 1200),
+        subtasks: normalizeTodoSubtasksForState(entry.subtasks || entry.subTasks || []),
+        memos: normalizeTodoMemosForState(entry.memos || entry.notes || []),
+        projectLaneId: typeof entry.projectLaneId === 'string' ? entry.projectLaneId.trim() : '',
+        bucket,
+        priority,
+        dueDate,
+        createdAt,
+      };
+      if (includeLegacyCategory) {
+        normalized.legacyCategoryId =
+          typeof entry.categoryId === 'string' && entry.categoryId.trim() ? entry.categoryId.trim() : '';
+        normalized.legacyCategory =
+          typeof entry.category === 'string' && entry.category.trim() ? entry.category.trim() : '';
+      }
+      if (includeCompletedAt) {
+        normalized.completedAt = normalizeUtcTimestamp(entry.completedAt);
+      }
+      return normalized;
+    })
+    .filter((entry) => Boolean(entry.title));
+}
+
+function buildProjectLaneResolver(projectLanes = []) {
+  const laneById = new Map();
+  const laneByBucketName = new Map();
+
+  projectLanes.forEach((lane) => {
+    if (!lane || typeof lane !== 'object') {
+      return;
+    }
+    laneById.set(lane.id, lane);
+    laneByBucketName.set(`${lane.bucket}:${String(lane.name || '').toLowerCase()}`, lane.id);
+  });
+
+  return {
+    laneById,
+    laneByBucketName,
+  };
+}
+
+function resolveProjectLaneId(entry, resolver) {
+  if (!entry || !resolver) {
+    return '';
+  }
+
+  const current = typeof entry.projectLaneId === 'string' ? entry.projectLaneId.trim() : '';
+  if (current && resolver.laneById.has(current)) {
+    const lane = resolver.laneById.get(current);
+    if (lane && lane.bucket === entry.bucket) {
+      return current;
+    }
+  }
+
+  const candidates = [entry.legacyCategoryId, entry.legacyCategory]
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (resolver.laneById.has(candidate)) {
+      const lane = resolver.laneById.get(candidate);
+      if (lane && lane.bucket === entry.bucket) {
+        return lane.id;
+      }
+    }
+
+    const byName = resolver.laneByBucketName.get(`${entry.bucket}:${candidate.toLowerCase()}`);
+    if (byName && resolver.laneById.has(byName)) {
+      return byName;
+    }
+  }
+
+  return '';
+}
+
+function migrateLegacyProjectLaneCollection(items = [], resolver) {
+  return items.map((entry) => {
+    const migratedLaneId = resolveProjectLaneId(entry, resolver);
+    const { legacyCategoryId, legacyCategory, categoryId, category, ...rest } = entry;
+    return {
+      ...rest,
+      projectLaneId: migratedLaneId,
+    };
+  });
+}
+
+function normalizeCalendarCollection(input = []) {
+  const source = Array.isArray(input) ? input : [];
+  return source
+    .filter((entry) => entry && typeof entry === 'object')
+    .map((entry) => {
+      const date = normalizeIsoDateOnly(entry.date);
+      const endDateRaw = normalizeIsoDateOnly(entry.endDate || entry.date);
+      const endDate = endDateRaw && endDateRaw >= date ? endDateRaw : date;
+      return {
+        id: typeof entry.id === 'string' && entry.id.trim() ? entry.id.trim() : crypto.randomUUID(),
+        date,
+        endDate,
+        type: entry.type === 'todo' ? 'todo' : 'note',
+        text: String(entry.text || '').trim().slice(0, 1200),
+        createdAt: normalizeUtcTimestamp(entry.createdAt),
+      };
+    })
+    .filter((entry) => Boolean(entry.date) && Boolean(entry.text));
 }
 
 function normalizeState(payload = {}) {
-  const todos = Array.isArray(payload.todos) ? payload.todos : [];
-  const doneLog = Array.isArray(payload.doneLog) ? payload.doneLog : [];
-  const calendarItems = Array.isArray(payload.calendarItems) ? payload.calendarItems : [];
-  const categoriesInput = Array.isArray(payload.categories) ? payload.categories : [];
-  const bucketLabelsInput = payload && typeof payload.bucketLabels === 'object' && payload.bucketLabels !== null ? payload.bucketLabels : {};
+  const bucketLabelsInput =
+    payload && typeof payload.bucketLabels === 'object' && payload.bucketLabels !== null ? payload.bucketLabels : {};
   const bucketOrderInput = Array.isArray(payload?.bucketOrder) ? payload.bucketOrder : [];
-  const bucketVisibilityInput = payload && typeof payload.bucketVisibility === 'object' && payload.bucketVisibility !== null ? payload.bucketVisibility : {};
+  const bucketVisibilityInput =
+    payload && typeof payload.bucketVisibility === 'object' && payload.bucketVisibility !== null
+      ? payload.bucketVisibility
+      : {};
   const projectLanesInput = Array.isArray(payload?.projectLanes) ? payload.projectLanes : [];
-  const userProfileInput = payload && typeof payload.userProfile === 'object' && payload.userProfile !== null ? payload.userProfile : {};
-  const categories = categoriesInput.filter(
-    (item) =>
-      item &&
-      typeof item.id === 'string' &&
-      typeof item.name === 'string' &&
-      !hasBrokenText(item.name),
+  const userProfileInput =
+    payload && typeof payload.userProfile === 'object' && payload.userProfile !== null ? payload.userProfile : {};
+  const normalizedProjectLanes = normalizeProjectLanes(projectLanesInput);
+  const laneResolver = buildProjectLaneResolver(normalizedProjectLanes);
+  const normalizedTodos = migrateLegacyProjectLaneCollection(
+    normalizeTodoCollection(payload?.todos || [], { includeLegacyCategory: true }),
+    laneResolver,
+  );
+  const normalizedDoneLog = migrateLegacyProjectLaneCollection(
+    normalizeTodoCollection(payload?.doneLog || [], { includeCompletedAt: true, includeLegacyCategory: true }),
+    laneResolver,
   );
 
-  if (categories.length === 0) {
-    categories.push({ id: 'uncategorized', name: '미분류' });
-  }
-  if (!categories.some((item) => item.id === 'uncategorized')) {
-    categories.unshift({ id: 'uncategorized', name: '미분류' });
-  }
-
   return {
-    todos,
-    doneLog,
-    calendarItems,
+    todos: normalizedTodos,
+    doneLog: normalizedDoneLog,
+    calendarItems: normalizeCalendarCollection(payload?.calendarItems || []),
     bucketLabels: normalizeBucketLabels(bucketLabelsInput),
     bucketOrder: normalizeBucketOrder(bucketOrderInput),
     bucketVisibility: normalizeBucketVisibility(bucketVisibilityInput),
-    projectLanes: normalizeProjectLanes(projectLanesInput),
-    categories,
+    projectLanes: normalizedProjectLanes,
     userProfile: normalizeUserProfile(userProfileInput),
   };
 }
@@ -1093,7 +1629,6 @@ function normalizeProjectLanes(input = []) {
       return;
     }
 
-    const categoryId = typeof lane.categoryId === 'string' && lane.categoryId.trim() ? lane.categoryId.trim() : '';
     const width = Number(lane.width || 0);
     const height = Number(lane.height || 0);
 
@@ -1102,7 +1637,6 @@ function normalizeProjectLanes(input = []) {
       id,
       name,
       bucket,
-      categoryId,
       width: Number.isFinite(width) && width >= 220 ? Math.round(width) : 0,
       height: Number.isFinite(height) && height >= 220 ? Math.round(height) : 0,
     });
@@ -1365,7 +1899,6 @@ async function getStateRow(userId) {
     normalized.todos.length > 0 ||
     normalized.doneLog.length > 0 ||
     normalized.calendarItems.length > 0 ||
-    normalized.categories.length > 1 ||
     hasCustomBucketLabels ||
     hasCustomBucketOrder ||
     hasCustomBucketVisibility ||
@@ -1411,12 +1944,12 @@ async function refreshKakaoAccessTokenIfNeeded(session) {
     });
 
     if (!response.ok) {
-      return;
+      return session;
     }
 
     const data = await response.json();
     if (!data || data.error || !data.access_token) {
-      return;
+      return session;
     }
 
     return {
@@ -1451,11 +1984,16 @@ async function authSessionMiddleware(req, res, next) {
     }
 
     let session = sessionId ? await getSessionRecord(sessionId) : null;
+    const now = Date.now();
+    const isAbsoluteExpired =
+      !!session &&
+      Number.isFinite(Number(session.createdAt)) &&
+      now - Number(session.createdAt) > SESSION_ABSOLUTE_TTL_MS;
 
-    if (!session || session.expiresAt <= Date.now()) {
+    if (!session || session.expiresAt <= now || isAbsoluteExpired) {
       if (sessionId && session) {
         await deleteSessionRecord(sessionId);
-        logSecurityEvent('session_expired', {
+        logSecurityEvent(isAbsoluteExpired ? 'session_absolute_expired' : 'session_expired', {
           sessionId,
           ip: req.ip,
           path: req.path,
@@ -1476,7 +2014,7 @@ async function authSessionMiddleware(req, res, next) {
     if (!session.csrfToken) {
       session.csrfToken = generateRandomToken();
     }
-    session.expiresAt = Date.now() + SESSION_TTL_MS;
+    session.expiresAt = now + SESSION_TTL_MS;
     await saveSessionRecord(sessionId, session);
     if ((req.cookies?.[CSRF_COOKIE] || '') !== session.csrfToken) {
       res.cookie(CSRF_COOKIE, session.csrfToken, csrfCookieSettings(process.env.NODE_ENV === 'production'));
@@ -1694,6 +2232,27 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+app.get('/api/meta', (_req, res) => {
+  res.json({
+    bucketKeys: [...BUCKET_KEYS],
+    defaultBucketLabels: { ...DEFAULT_BUCKET_LABELS },
+    defaultBucketVisibility: { ...DEFAULT_BUCKET_VISIBILITY },
+    poll: {
+      stateActiveMs: POLL_STATE_ACTIVE_MS,
+      stateHiddenMs: POLL_STATE_HIDDEN_MS,
+      collabActiveMs: POLL_COLLAB_ACTIVE_MS,
+      collabHiddenMs: POLL_COLLAB_HIDDEN_MS,
+    },
+    holidays: {
+      provider: HOLIDAY_API_PROVIDER,
+      clientCacheTtlMs: HOLIDAY_CLIENT_CACHE_TTL_MS,
+    },
+    schema: {
+      latestMigrationVersion: Number(latestSchemaMigrationVersion || 0),
+    },
+  });
+});
+
 app.use('/api/holidays', createHolidaysRouter());
 
 app.use(
@@ -1748,7 +2307,11 @@ app.use((error, req, res, _next) => {
 });
 
 function startServer() {
-  return ensureDatabase()
+  return Promise.resolve()
+    .then(() => {
+      validateRequiredSecurityConfig();
+      return ensureDatabase();
+    })
     .then(() => {
       const isProd = process.env.NODE_ENV === 'production';
 
@@ -1763,19 +2326,7 @@ function startServer() {
           '[security] KAKAO_CLIENT_ID or KAKAO_CLIENT_SECRET is not configured. OAuth endpoints will fail.',
         );
       }
-      if (SESSION_ENCRYPTION_KEY_CONFIGURED && !SESSION_TOKEN_ENCRYPTION_KEY) {
-        console.error(
-          '[security] SESSION_ENCRYPTION_KEY is set but invalid. Must be 32-byte base64/hex/utf8 string.',
-        );
-        if (isProd) {
-          throw new Error('invalid_SESSION_ENCRYPTION_KEY');
-        }
-      }
-      if (SESSION_TOKEN_ENCRYPTION_KEY) {
-        console.log('[security] Session token encryption enabled for OAuth tokens.');
-      } else {
-        console.warn('[security] Session token encryption disabled. Configure SESSION_ENCRYPTION_KEY for production.');
-      }
+      console.log('[security] Session token encryption enabled for OAuth tokens.');
 
       setInterval(() => {
         cleanupExpiredStates().catch(() => {});
@@ -1838,4 +2389,7 @@ module.exports = {
   upsertUser,
   ensureDatabase,
   ensureCollabSchemas,
+  logSecurityEvent,
+  closeDatabase,
 };
+
