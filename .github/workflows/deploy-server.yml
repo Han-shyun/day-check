@@ -21,8 +21,8 @@ jobs:
 
       - name: Prepare SSH key
         env:
-          SSH_KEY: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
-          SSH_KEY_B64: ${{ secrets.SERVER_SSH_PRIVATE_KEY_B64 }}
+          SSH_KEY: ${{ secrets.SERVER_SSH_PRIVATE_KEY || secrets.SSH_KEY || secrets['SSH-KEY'] }}
+          SSH_KEY_B64: ${{ secrets.SERVER_SSH_PRIVATE_KEY_B64 || secrets.SSH_KEY2 || secrets['SSH-KEY2'] }}
           SSH_HOST: ${{ secrets.SERVER_HOST || vars.SERVER_HOST || '168.107.48.248' }}
           SSH_USER: ${{ secrets.SERVER_USER || vars.SERVER_USER || 'ubuntu' }}
           SSH_PORT: ${{ secrets.SERVER_SSH_PORT }}
@@ -38,7 +38,7 @@ jobs:
           done
 
           if [ -z "${SSH_KEY:-}" ] && [ -z "${SSH_KEY_B64:-}" ]; then
-            echo "::error title=Missing secret::Set SERVER_SSH_PRIVATE_KEY or SERVER_SSH_PRIVATE_KEY_B64."
+            echo "::error title=Missing secret::Set one of SERVER_SSH_PRIVATE_KEY / SSH_KEY / SSH-KEY or SERVER_SSH_PRIVATE_KEY_B64 / SSH_KEY2 / SSH-KEY2."
             exit 1
           fi
 
