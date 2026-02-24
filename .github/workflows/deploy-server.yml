@@ -143,12 +143,23 @@ jobs:
         run: |
           set -euo pipefail
           PORT="${SSH_PORT:-22}"
-          DEPLOYED_REV="$(
+          DEPLOYED_VERSION="$(
             ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=yes "${SSH_USER}@${SSH_HOST}" \
-              "if [ -d \"${APP_PATH}/.git\" ]; then git -C \"${APP_PATH}\" rev-parse HEAD; elif [ -f \"${APP_PATH}/.deploy-version\" ]; then cat \"${APP_PATH}/.deploy-version\"; else echo 'missing'; fi"
+              "if [ -f \"${APP_PATH}/.deploy-version\" ]; then cat \"${APP_PATH}/.deploy-version\"; else echo ''; fi"
           )"
-          echo "[deploy] remote revision: ${DEPLOYED_REV}"
-          if [ "${DEPLOYED_REV}" != "${GITHUB_SHA}" ]; then
-            echo "::error title=Revision mismatch::Expected ${GITHUB_SHA}, got ${DEPLOYED_REV}"
+          DEPLOYED_GIT_HEAD="$(
+            ssh -i ~/.ssh/deploy_key -p "$PORT" -o StrictHostKeyChecking=yes "${SSH_USER}@${SSH_HOST}" \
+              "if [ -d \"${APP_PATH}/.git\" ]; then git -C \"${APP_PATH}\" rev-parse HEAD; else echo ''; fi"
+          )"
+          echo "[deploy] remote .deploy-version: ${DEPLOYED_VERSION:-<empty>}"
+          echo "[deploy] remote git HEAD: ${DEPLOYED_GIT_HEAD:-<empty>}"
+          if [ "${DEPLOYED_VERSION}" = "${GITHUB_SHA}" ] || [ "${DEPLOYED_GIT_HEAD}" = "${GITHUB_SHA}" ]; then
+            echo "[deploy] revision verification ok"
+            exit 0
+          fi
+          if [ -z "${DEPLOYED_VERSION}" ] && [ -z "${DEPLOYED_GIT_HEAD}" ]; then
+            echo "::error title=Revision missing::Both .deploy-version and git HEAD are unavailable on remote host."
             exit 1
           fi
+          echo "::error title=Revision mismatch::Expected ${GITHUB_SHA}, got deploy-version='${DEPLOYED_VERSION}' git='${DEPLOYED_GIT_HEAD}'"
+          exit 1
