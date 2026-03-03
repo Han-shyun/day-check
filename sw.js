@@ -1,4 +1,4 @@
-const CACHE_NAME = 'day-check-cache-v4';
+const CACHE_NAME = 'day-check-cache-v5';
 const APP_SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-180.png'];
 
 function isCacheableResponse(response) {

@@ -1,0 +1,71 @@
+﻿// DOM element references
+export const routeOutletEl = document.getElementById('routeOutlet');
+export const routeLinkEls = Array.from(document.querySelectorAll('[data-route-link]'));
+export const routeViewEls = Array.from(document.querySelectorAll('[data-route-view]'));
+
+export const dateEl = document.getElementById('todayDate');
+export const todoCountEl = document.getElementById('todoCount');
+export const todoListEl = document.getElementById('todoList');
+export const todoTemplate = document.getElementById('todoItemTemplate');
+export const boardEl = document.querySelector('.board');
+export const addProjectColumnBtn = document.getElementById('addProjectColumnBtn');
+export const removeProjectColumnBtn = document.getElementById('removeProjectColumnBtn');
+
+export const authStatusEl = document.getElementById('authStatus');
+export const authBtn = document.getElementById('authBtn');
+export const appHeaderEl = document.getElementById('appHeader');
+
+export const weekRangeEl = document.getElementById('weekRange');
+export const weeklyDoneCountEl = document.getElementById('weeklyDoneCount');
+export const weeklyDoneListEl = document.getElementById('weeklyDoneList');
+export const weeklyPendingCountEl = document.getElementById('weeklyPendingCount');
+export const weeklyPendingListEl = document.getElementById('weeklyPendingList');
+export const quickForm = document.getElementById('quickAddForm');
+export const quickAddBody = document.getElementById('quickAddBody');
+export const quickAddOptionsToggleBtn = document.getElementById('quickAddOptionsToggle');
+export const quickAddOptionsEl = document.getElementById('quickAddOptions');
+export const quickInput = document.getElementById('quickInput');
+export const dueDateInput = document.getElementById('dueDateInput');
+export const bucketSelect = document.getElementById('bucketSelect');
+export const prioritySelect = document.getElementById('prioritySelect');
+
+export const calendarForm = document.getElementById('calendarForm');
+export const calendarDateInput = document.getElementById('calendarDateInput');
+export const calendarModeButtons = Array.from(document.querySelectorAll('.calendar-mode-btn'));
+export const calendarSubmitBtn = document.getElementById('calendarSubmitBtn');
+export const calendarTextInput = document.getElementById('calendarTextInput');
+export const calendarTodoFields = document.getElementById('calendarTodoFields');
+export const calendarTodoTitleInput = document.getElementById('calendarTodoTitleInput');
+export const calendarTodoDetailInput = document.getElementById('calendarTodoDetailInput');
+export const calendarGrid = document.getElementById('calendarGrid');
+export const calendarMonthLabel = document.getElementById('calendarMonthLabel');
+export const prevMonthBtn = document.getElementById('prevMonthBtn');
+export const nextMonthBtn = document.getElementById('nextMonthBtn');
+
+export const selectedDateLabel = document.getElementById('selectedDateLabel');
+export const selectedDateSummary = document.getElementById('selectedDateSummary');
+export const selectedCreatedList = document.getElementById('selectedCreatedList');
+export const selectedCompletedList = document.getElementById('selectedCompletedList');
+export const selectedCalendarNoteList = document.getElementById('selectedCalendarNoteList');
+export const selectedDateNoteInput = document.getElementById('selectedDateNoteInput');
+export const selectedDateNoteStartDate = document.getElementById('selectedDateNoteStartDate');
+export const selectedDateNoteEndDate = document.getElementById('selectedDateNoteEndDate');
+export const addSelectedDateNoteBtn = document.getElementById('addSelectedDateNoteBtn');
+export const userAliasPreviewEl = document.getElementById('userAliasPreview');
+export const toggleProfileEditorBtn = document.getElementById('toggleProfileEditorBtn');
+export const profileEditorEl = document.getElementById('profileEditor');
+export const profileNicknameInput = document.getElementById('profileNicknameInput');
+export const profileHonorificInput = document.getElementById('profileHonorificInput');
+export const profilePublicIdInput = document.getElementById('profilePublicIdInput');
+export const profilePublicIdHint = document.getElementById('profilePublicIdHint');
+export const saveProfileBtn = document.getElementById('saveProfileBtn');
+export const cancelProfileBtn = document.getElementById('cancelProfileBtn');
+
+export const collabPanelEl = document.getElementById('collabPanel');
+export const collabProfileBadgeEl = document.getElementById('collabProfileBadge');
+export const collabInviteFormEl = document.getElementById('collabInviteForm');
+export const collabInviteBucketSelectEl = document.getElementById('collabInviteBucketSelect');
+export const collabInviteTargetInputEl = document.getElementById('collabInviteTargetInput');
+export const collabReceivedInvitesEl = document.getElementById('collabReceivedInvites');
+export const collabSentInvitesEl = document.getElementById('collabSentInvites');
+export const collabMembershipListEl = document.getElementById('collabMembershipList');

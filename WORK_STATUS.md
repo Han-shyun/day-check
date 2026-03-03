@@ -1,5 +1,33 @@
 ﻿# day-check 구현 현황 (2026-02-18)
 
+
+## 최신 반영 (2026-02-26, 이어서 진행)
+
+### 무엇을 변경했는지
+1. 리팩터링 가이드 기준 진행 상태를 이어서 점검했고, 핵심 미완료 항목(콜라보/버킷/투두 핸들러 본체 통합)은 계속 진행 중으로 유지.
+2. 자동 배포 안정화를 위해 Windows 환경용 수동 배포 스크립트(`scripts/deploy-local.ps1`)를 추가하고, `npm run deploy:local` 실행 경로를 등록.
+3. 배포 키 alias를 문서화( `SERVER_SSH_PRIVATE_KEY`/`SERVER_SSH_PRIVATE_KEY_B64` 외 `SSH-KEY`, `SSH_KEY`, `SSH-KEY2`, `SSH_KEY2`) 및 수동 배포 명령을 README에 반영.
+4. `deploy-local.ps1` 키 조회 로직을 강화해 파일 키/텍스트 키/base64 키 alias 모두 처리하고, 원격 배포 시 `.deploy-version` 동기화를 추가.
+5. `src/features/collab/index.js`의 공개 import/export 인터페이스 충돌을 정리해 `main.js`의 기대 export 이름을 복원.
+6. `npm run build`, `npm run test:run` 통과 후 `npm run deploy:local` 배포 완료.
+7. 원격 검증(`https://mydaycheck.duckdns.org/api/health`, `/api/meta`) 정상 응답 확인.
+8. 디자인 반영 지연 가능성 대비를 위해 `sw.js` 캐시 버전(`day-check-cache-v5`)를 상향해 PWA 캐시 기반 정적 자산 갱신을 강제.
+
+### 현재 상태
+- 테스트: `npm run test:run` 통과
+- 빌드: `npm run build` 통과
+- 로컬 배포 스크립트는 실행 성공(원격 `npm ci --omit=dev`, 서버 재기동, `.deploy-version` 기록 포함), `/api/health`와 `/api/meta` 응답 확인.
+
+### 배포 결과
+- `npm run deploy:local` 실행 성공(원격 `node` 의존성 설치 후 서버 재기동 확인).
+- 원격 API(`https://mydaycheck.duckdns.org/api/health`) 응답: `{"status":"ok"}`.
+- 원격 API(`/api/meta`) 응답: 버킷/폴링/공휴일 TTL/마이그레이션 버전 정보 반환.
+
+### 남은 이슈
+1. `REFACTOR_GUIDE.md`에 정리된 4-1,5-1,5-2 핵심 분리 미완료 항목을 코드 레벨로 마무리하는 작업이 남아 있음.
+2. 원격 서버의 기존 변경분 정리(`daycheck.sqlite`/불필요 로그/개발 산출물)와 배포본 정합성 검증이 필요.
+3. 브라우저 캐시/서비스워커 영향으로 UX 변경 확인은 클라이언트 실제 접속에서 1회 강제 새로고침 후 검토 필요.
+
 ## 완료한 작업
 1. 백엔드 서버 골격 추가
 - `server.js` 생성
@@ -627,3 +655,25 @@
 ### 남은 이슈 / 리스크
 1. 실제 운영 환경(공공데이터포털 실키, 카카오 OAuth 왕복, 배포 인프라)에서 E2E 검증은 별도 필요
 2. `NODE_ENV=production`이 `.env`에 있을 때 Vite 경고가 출력되므로 dev/build 분리 운영 권장
+
+## 추가 작업 내역 (2026-02-25 / 리팩터 가이드 진행 지속)
+
+### 무엇을 변경했는지
+1. 리팩터 문서 상태 반영
+- `docs/REFACTOR_GUIDE.md`의 완료/미완료 항목을 명확히 `[x]`/`[ ]` 구조로 정리.
+- `features/collab`, `features/bucket`, `features/todo`의 남은 이관 범위를 구체 항목으로 분리.
+
+### 현재 상태
+- 기존 변경(`T-001~T-022`, 플랫 스타일 반영)은 유지되며, 로컬 기준 `npm run build`, `npm run test:run` 통과.
+- 문서-작업 상태 동기화: 남은 항목을 “Collab/버킷/할일의 main.js 이관”으로 좁힘.
+
+### 남은 이슈
+1. `main.js`의 협업/버킷/할일 핵심 이벤트/렌더/네트워크 처리 로직 분리 미완료.
+2. 배포 자동화는 워크플로우 기반이나, 운영 시 `push` 브랜치 및 SSH 시크릿 구성 확인 필요.
+3. 브라우저 실제 동작(디자인, 접근성, 협업 폴링) E2E 검증 미실행.
+
+### 다음 액션
+- 우선순위 1: `src/features/collab/index.js`로 협업 함수 이관.
+- 우선순위 2: `src/features/bucket/index.js`, `src/features/todo/index.js`로 핵심 렌더/이벤트 이관.
+- 우선순위 3: `src/main.js` 결합 정리 후 문서 상태 반영 완료.
+

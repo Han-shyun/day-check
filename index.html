@@ -341,13 +341,8 @@
         <div class="todo-main">
           <span class="title"></span>
           <span class="meta"></span>
-          <textarea
-            class="todo-detail-input"
-            rows="3"
-            maxlength="1200"
-            placeholder="요약 설명 (선택)"
-            aria-label="요약 설명 입력"
-          ></textarea>
+          <a class="todo-detail-toggle" href="javascript:void(0)" role="button" aria-expanded="false">상세 보기</a>
+          <div class="todo-collapsible" hidden>
           <section class="todo-extra" aria-label="세부 할 일과 메모">
             <div class="todo-subtask-composer">
               <input
@@ -372,9 +367,9 @@
             </div>
             <ul class="todo-memo-list"></ul>
           </section>
+          </div>
         </div>
         <div class="todo-controls">
-          <select class="todo-project-lane-select" aria-label="세부 프로젝트 선택"></select>
           <div class="actions">
             <button class="complete" type="button">완료</button>
             <button class="delete" type="button" aria-label="삭제">삭제</button>

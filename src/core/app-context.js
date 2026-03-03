@@ -1,0 +1,85 @@
+﻿import {
+  COLLAB_POLL_ACTIVE_INTERVAL_MS_DEFAULT,
+  COLLAB_POLL_HIDDEN_INTERVAL_MS_DEFAULT,
+  defaultBucketLabels,
+  defaultBucketVisibility,
+  defaultUserProfile,
+  STATE_POLL_ACTIVE_INTERVAL_MS_DEFAULT,
+  STATE_POLL_HIDDEN_INTERVAL_MS_DEFAULT,
+  HOLIDAY_CACHE_TTL_MS_DEFAULT,
+  buckets,
+} from './constants.js';
+
+export const state = {
+  todos: [],
+  doneLog: [],
+  calendarItems: [],
+  bucketLabels: { ...defaultBucketLabels },
+  bucketOrder: [...buckets],
+  bucketVisibility: { ...defaultBucketVisibility },
+  projectLanes: [],
+  userProfile: { ...defaultUserProfile },
+  currentMonth: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
+  selectedDate: '',
+  version: 0,
+};
+
+export const appState = {
+  data: state,
+  runtime: {
+    isServerSync: false,
+    authUser: null,
+    pendingSync: false,
+    syncing: false,
+    syncTimer: null,
+    localDirty: false,
+    statePollTimer: null,
+    statePollInFlight: false,
+    statePollIntervalMs: 0,
+    statePollingEventsRegistered: false,
+    eventsRegistered: false,
+    columnResizeObserver: null,
+    toastHostEl: null,
+    calendarMode: 'note',
+    currentRoute: 'home',
+    appRouter: null,
+    routeTransitionTimer: null,
+    routeModules: {},
+    authView: null,
+    viewportClassRegistered: false,
+    collabProfile: {
+      publicId: '',
+      publicIdUpdatedAt: null,
+    },
+    collabSummary: null,
+    collabShareSettingsByBucket: {},
+    sharedTodosByContext: {},
+    sharedCommentsByTodo: {},
+    activeSharedContextByBucket: {},
+    collabPollTimer: null,
+    collabPollInFlight: false,
+    collabPollIntervalMs: 0,
+    lastApiErrorToastKey: '',
+    lastApiErrorToastAt: 0,
+    fatalErrorShown: false,
+    fatalErrorOverlayEl: null,
+    globalErrorHandlersRegistered: false,
+    bucketMenuHandlersRegistered: false,
+    activeBucketMenuButton: null,
+  },
+  config: {
+    poll: {
+      stateActiveMs: STATE_POLL_ACTIVE_INTERVAL_MS_DEFAULT,
+      stateHiddenMs: STATE_POLL_HIDDEN_INTERVAL_MS_DEFAULT,
+      collabActiveMs: COLLAB_POLL_ACTIVE_INTERVAL_MS_DEFAULT,
+      collabHiddenMs: COLLAB_POLL_HIDDEN_INTERVAL_MS_DEFAULT,
+    },
+    holidays: {
+      cacheTtlMs: HOLIDAY_CACHE_TTL_MS_DEFAULT,
+    },
+    metaLoaded: false,
+  },
+};
+
+export const runtime = appState.runtime;
+export const config = appState.config;
