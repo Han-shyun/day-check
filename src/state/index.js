@@ -247,7 +247,7 @@ export function normalizeBucketLabels(input = {}) {
     const raw = typeof rawValue === 'string' ? rawValue.trim() : '';
     const isBroken = raw && hasBrokenText(raw);
     if (isBroken) {
-      _showBrokenTextFilteredToast('버킷 이름', raw);
+      _showBrokenTextFilteredToast('bucket name', raw);
     }
     const safeLabel = raw && !isBroken ? raw : '';
     acc[bucket] = safeLabel || defaultBucketLabels[bucket] || bucket;
@@ -281,7 +281,7 @@ export function normalizeBucketVisibility(input = {}) {
 export function normalizeProjectLaneName(raw) {
   const normalized = normalizeBucketLabel(raw).slice(0, 30);
   if (normalized && hasBrokenText(normalized)) {
-    _showBrokenTextFilteredToast('세부 프로젝트 이름', normalized);
+    _showBrokenTextFilteredToast('project lane name', normalized);
     return '';
   }
   return normalized;
@@ -615,7 +615,7 @@ export function handleVersionConflict(payload = {}) {
   }
 
   const keepLocal = window.confirm(
-    '버전 충돌이 발생했습니다.\n확인: 내 변경 유지 후 다시 저장\n취소: 서버 최신 상태 적용',
+    'Version conflict detected.\nOK: Keep my changes and retry save\nCancel: Apply latest server state',
   );
 
   if (keepLocal) {
@@ -624,11 +624,9 @@ export function handleVersionConflict(payload = {}) {
     }
     runtime.localDirty = true;
     _queueSync(true);
-    _showToast('버전 충돌 시 기존 변경 유지 후 재저장을 시도합니다.', 'error');
-    _showToast('내 변경을 유지하고 다시 저장을 시도합니다.', 'error');
+    _showToast('Keeping your changes and retrying save.', 'error');
   }
 
   applyServerStateSnapshot(remoteState, remoteVersion);
-  _showToast('동기화 충돌 응답을 확인했습니다.', 'info');
-  _showToast('서버 최신 상태를 적용했습니다.', 'info');
+  _showToast('Applied latest server state.', 'info');
 }

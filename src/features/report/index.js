@@ -1,4 +1,4 @@
-﻿import { state } from '../../core/app-context.js';
+import { state } from '../../core/app-context.js';
 import {
   inCurrentWeek,
   startOfWeek,
@@ -18,8 +18,9 @@ import {
 let _addEmptyMessage = () => {};
 let _sortTodos = (list) => list;
 let _getTodoGroupLabel = (todo) => todo?.title || '';
+let _queueSync = () => {};
 
-export function initReportDeps({ addEmptyMessage, sortTodos, getTodoGroupLabel } = {}) {
+export function initReportDeps({ addEmptyMessage, sortTodos, getTodoGroupLabel, queueSync } = {}) {
   if (typeof addEmptyMessage === 'function') {
     _addEmptyMessage = addEmptyMessage;
   }
@@ -29,6 +30,48 @@ export function initReportDeps({ addEmptyMessage, sortTodos, getTodoGroupLabel }
   if (typeof getTodoGroupLabel === 'function') {
     _getTodoGroupLabel = getTodoGroupLabel;
   }
+  if (typeof queueSync === 'function') {
+    _queueSync = queueSync;
+  }
+}
+
+function createEditableReportItem(item, textContent, { editable = false } = {}) {
+  const li = document.createElement('li');
+  li.className = 'report-item';
+
+  if (!editable) {
+    li.textContent = textContent;
+    return li;
+  }
+
+  const titleSpan = document.createElement('span');
+  titleSpan.className = 'title';
+  titleSpan.textContent = item.title;
+  titleSpan.setAttribute('contenteditable', 'true');
+  titleSpan.setAttribute('spellcheck', 'false');
+  titleSpan.addEventListener('blur', () => {
+    const next = (titleSpan.textContent || '').trim();
+    if (next && next !== item.title) {
+      item.title = next;
+      _queueSync();
+    } else {
+      titleSpan.textContent = item.title;
+    }
+  });
+  titleSpan.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      titleSpan.blur();
+    }
+  });
+
+  const dueDateText = item.dueDate ? ` / Due ${formatDisplayDate(item.dueDate)}` : '';
+  const metaSpan = document.createElement('span');
+  metaSpan.className = 'meta';
+  metaSpan.textContent = ` [${_getTodoGroupLabel(item)}] (${formatDisplayDateTime(item.completedAt || item.createdAt)}${dueDateText})`;
+
+  li.append(titleSpan, metaSpan);
+  return li;
 }
 
 export function renderWeeklyReport() {
@@ -54,30 +97,28 @@ export function renderWeeklyReport() {
     .sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
   const weeklyPending = _sortTodos(state.todos);
 
-  weeklyDoneCountEl.textContent = `${weeklyDone.length}개`;
-  weeklyPendingCountEl.textContent = `${weeklyPending.length}개`;
+  weeklyDoneCountEl.textContent = `${weeklyDone.length} items`;
+  weeklyPendingCountEl.textContent = `${weeklyPending.length} items`;
   weeklyDoneListEl.innerHTML = '';
   weeklyPendingListEl.innerHTML = '';
 
   if (weeklyDone.length === 0) {
-    _addEmptyMessage(weeklyDoneListEl, '이번 주 완료된 항목이 없습니다.');
+    _addEmptyMessage(weeklyDoneListEl, 'No completed items this week.');
   } else {
     weeklyDone.forEach((item) => {
-      const dueDateText = item.dueDate ? ` / 마감 ${formatDisplayDate(item.dueDate)}` : '';
-      const li = document.createElement('li');
-      li.textContent = `[${_getTodoGroupLabel(item)}] ${item.title} (${formatDisplayDateTime(item.completedAt)}${dueDateText})`;
-      weeklyDoneListEl.appendChild(li);
+      weeklyDoneListEl.appendChild(
+        createEditableReportItem(item, '', { editable: true }),
+      );
     });
   }
 
   if (weeklyPending.length === 0) {
-    _addEmptyMessage(weeklyPendingListEl, '남아 있는 항목이 없습니다.');
+    _addEmptyMessage(weeklyPendingListEl, 'No pending items.');
   } else {
     weeklyPending.forEach((item) => {
-      const dueDateText = item.dueDate ? ` / 마감 ${formatDisplayDate(item.dueDate)}` : '';
-      const li = document.createElement('li');
-      li.textContent = `[${_getTodoGroupLabel(item)}] ${item.title}${dueDateText}`;
-      weeklyPendingListEl.appendChild(li);
+      weeklyPendingListEl.appendChild(
+        createEditableReportItem(item, '', { editable: true }),
+      );
     });
   }
 }

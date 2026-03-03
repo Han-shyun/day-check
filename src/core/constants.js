@@ -1,4 +1,4 @@
-﻿export const TODO_STORAGE_KEY = 'day-check.main.todos.v4';
+export const TODO_STORAGE_KEY = 'day-check.main.todos.v4';
 export const DONE_STORAGE_KEY = 'day-check.main.doneLog.v1';
 export const CALENDAR_STORAGE_KEY = 'day-check.main.calendarItems.v1';
 export const BUCKET_LABELS_STORAGE_KEY = 'day-check.main.bucketLabels.v1';
@@ -23,7 +23,7 @@ export const BUCKET_TOTAL = 8;
 
 export const defaultBucketLabels = Array.from({ length: BUCKET_TOTAL }, (_, index) => [
   `bucket${index + 1}`,
-  `버킷 ${index + 1}`,
+  `Bucket ${index + 1}`,
 ]).reduce((acc, [bucket, label]) => {
   acc[bucket] = label;
   return acc;
@@ -38,29 +38,29 @@ export const defaultBucketVisibility = buckets.reduce((acc, bucket, index) => {
 
 export const defaultUserProfile = {
   nickname: '',
-  honorific: '님',
+  honorific: '',
 };
 
 export const priorityLabel = {
-  3: '낮음',
-  2: '보통',
-  1: '높음',
+  3: 'Low',
+  2: 'Normal',
+  1: 'High',
 };
 
 export const typeLabel = {
-  todo: '할 일',
-  note: '메모',
+  todo: 'Task',
+  note: 'Note',
 };
 
 export const HOLIDAYS_BY_MONTH_DAY_FALLBACK = {
-  '01-01': '신정',
-  '03-01': '삼일절',
-  '05-05': '어린이날',
-  '06-06': '현충일',
-  '08-15': '광복절',
-  '10-03': '개천절',
-  '10-09': '한글날',
-  '12-25': '성탄절',
+  '01-01': "New Year's Day",
+  '03-01': 'Independence Movement Day',
+  '05-05': "Children's Day",
+  '06-06': 'Memorial Day',
+  '08-15': 'Liberation Day',
+  '10-03': 'National Foundation Day',
+  '10-09': 'Hangul Day',
+  '12-25': 'Christmas',
 };
 
 export const HOLIDAYS_BY_YEAR = {};

@@ -100,11 +100,11 @@ import {
   markStateDirty,
 } from './state/index.js';
 
-/* ── 로컬 헬퍼 (모듈에 없는 함수) ── */
+/* ── Local helpers ── */
 
 function formatToday() {
   const now = new Date();
-  const fmt = new Intl.DateTimeFormat('ko-KR', {
+  const fmt = new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -129,7 +129,7 @@ function queueSync(immediate = false) {
   return collab.queueSync(immediate);
 }
 
-/* ── 이벤트 등록 ── */
+/* ── Event registration ── */
 
 function registerEvents() {
   if (runtime.eventsRegistered) {
@@ -156,7 +156,7 @@ function registerEvents() {
         if (shouldHide) {
           quickAddOptionsEl.classList.add('hidden');
           quickAddOptionsToggleBtn.setAttribute('aria-expanded', 'false');
-          quickAddOptionsToggleBtn.textContent = '옵션';
+          quickAddOptionsToggleBtn.textContent = 'Options';
           return;
         }
 
@@ -164,7 +164,7 @@ function registerEvents() {
           quickAddOptionsEl.classList.remove('hidden');
         }
         quickAddOptionsToggleBtn.setAttribute('aria-expanded', 'true');
-        quickAddOptionsToggleBtn.textContent = '접기';
+        quickAddOptionsToggleBtn.textContent = 'Collapse';
       });
     }
 
@@ -202,7 +202,7 @@ function registerEvents() {
       }
       if (quickAddOptionsToggleBtn) {
         quickAddOptionsToggleBtn.setAttribute('aria-expanded', 'false');
-        quickAddOptionsToggleBtn.textContent = '옵션';
+        quickAddOptionsToggleBtn.textContent = 'Options';
       }
       quickInput?.focus();
     });
@@ -243,7 +243,7 @@ function registerEvents() {
       event.preventDefault();
       const date = String(calendarDateInput?.value || '').trim();
       if (!date) {
-        showToast('날짜를 선택해 주세요.', 'error');
+        showToast('Please select a date.', 'error');
         if (calendarDateInput) {
           calendarDateInput.focus();
         }
@@ -257,7 +257,7 @@ function registerEvents() {
 
       if (itemType === 'todo') {
         if (!todoTitle) {
-          showToast('할 일 제목을 입력해 주세요.', 'error');
+          showToast('Please enter a task title.', 'error');
           if (calendarTodoTitleInput) {
             calendarTodoTitleInput.focus();
           }
@@ -275,7 +275,7 @@ function registerEvents() {
         );
       } else {
         if (!noteText) {
-          showToast('메모를 입력해 주세요.', 'error');
+          showToast('Please enter a note.', 'error');
           if (calendarTextInput) {
             calendarTextInput.focus();
           }
@@ -421,7 +421,7 @@ function registerEvents() {
       await collab.refreshCollabSummary({ includeTodos: true });
       collab.updateAuthUI();
       hideProfileEditor();
-      showToast('호칭을 저장했습니다.', 'success');
+      showToast('Profile saved.', 'success');
     });
 
     cancelProfileBtn.addEventListener('click', () => {
@@ -485,7 +485,7 @@ function registerEvents() {
     collabInviteFormEl.addEventListener('submit', (event) => {
       event.preventDefault();
       collab.submitCollabInvite().catch(() => {
-        showToast('초대 요청 처리에 실패했습니다.', 'error');
+        showToast('Failed to process invite request.', 'error');
       });
     });
   }
@@ -497,7 +497,7 @@ function registerEvents() {
         return;
       }
       collab.handleCollabPanelAction(button).catch(() => {
-        showToast('공유 요청 처리에 실패했습니다.', 'error');
+        showToast('Failed to process sharing request.', 'error');
       });
     });
   }
@@ -536,7 +536,7 @@ function registerEvents() {
       }
       event.preventDefault();
       collab.submitSharedComposeForm(form).catch(() => {
-        showToast('공유 작업 추가에 실패했습니다.', 'error');
+        showToast('Failed to add shared task.', 'error');
       });
     });
 
@@ -552,7 +552,7 @@ function registerEvents() {
       if (action === 'toggle-share-setting') {
         const bucket = button.dataset.bucket;
         collab.toggleBucketShareSetting(bucket).catch(() => {
-          showToast('버킷 공유 설정 변경에 실패했습니다.', 'error');
+          showToast('Failed to change bucket sharing settings.', 'error');
         });
         return;
       }
@@ -563,25 +563,25 @@ function registerEvents() {
 
       if (action === 'save' || action === 'toggle-done') {
         collab.updateSharedTodoFromItem(itemEl, action).catch(() => {
-          showToast('공유 작업 수정에 실패했습니다.', 'error');
+          showToast('Failed to update shared task.', 'error');
         });
         return;
       }
       if (action === 'delete') {
         collab.deleteSharedTodo(itemEl.dataset.todoId).catch(() => {
-          showToast('공유 작업 삭제에 실패했습니다.', 'error');
+          showToast('Failed to delete shared task.', 'error');
         });
         return;
       }
       if (action === 'toggle-comments') {
         collab.toggleSharedCommentPanel(itemEl).catch(() => {
-          showToast('의견 패널을 열 수 없습니다.', 'error');
+          showToast('Could not open comment panel.', 'error');
         });
         return;
       }
       if (action === 'add-comment') {
         collab.addSharedComment(itemEl).catch(() => {
-          showToast('의견 등록에 실패했습니다.', 'error');
+          showToast('Failed to add comment.', 'error');
         });
         return;
       }
@@ -592,14 +592,14 @@ function registerEvents() {
           return;
         }
         collab.deleteSharedComment(commentId, todoId).catch(() => {
-          showToast('의견 삭제에 실패했습니다.', 'error');
+          showToast('Failed to delete comment.', 'error');
         });
       }
     });
   }
 }
 
-/* ── 서비스 워커 ── */
+/* ── Service worker ── */
 
 function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) {
@@ -645,7 +645,7 @@ function registerServiceWorker() {
   });
 }
 
-/* ── 부트스트랩 ── */
+/* ── Bootstrap ── */
 
 async function bootstrap() {
   registerGlobalErrorBoundary();
@@ -663,6 +663,7 @@ async function bootstrap() {
     addEmptyMessage: calendarModule.addEmptyMessage,
     sortTodos: todoModule.sortTodos,
     getTodoGroupLabel: bucketModule.getTodoGroupLabel,
+    queueSync: collab.queueSync,
   });
   initRouterDeps({
     render,
@@ -838,7 +839,7 @@ async function bootstrap() {
   const searchParams = new URLSearchParams(window.location.search);
   const auth = searchParams.get('auth');
   if (auth === 'error') {
-    alert('카카오 로그인 중 오류가 발생했습니다.');
+    alert('An error occurred during Kakao login.');
   }
 }
 
@@ -861,7 +862,7 @@ bootstrap().catch((error) => {
     collab.updateAuthUI();
     render();
 
-    showToast('초기화 중 일부 오류가 발생했지만 앱을 복구했습니다.', 'error');
+    showToast('Some errors occurred during initialization, but the app has recovered.', 'error');
   } catch (fallbackError) {
     handleFatalError(fallbackError);
   }

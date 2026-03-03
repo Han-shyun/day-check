@@ -194,12 +194,12 @@ export function createSelectedNoteTextNode(rawText) {
   const expandBtn = document.createElement('button');
   expandBtn.type = 'button';
   expandBtn.className = 'selected-note-expand';
-  expandBtn.textContent = '더 보기';
+  expandBtn.textContent = 'More';
   expandBtn.setAttribute('aria-expanded', 'false');
   expandBtn.addEventListener('click', () => {
     const expanded = textEl.classList.toggle('is-expanded');
     expandBtn.setAttribute('aria-expanded', String(expanded));
-    expandBtn.textContent = expanded ? '접기' : '더 보기';
+    expandBtn.textContent = expanded ? 'Collapse' : 'More';
   });
 
   container.appendChild(expandBtn);
@@ -209,7 +209,7 @@ export function createSelectedNoteTextNode(rawText) {
 export function renderSelectedDatePanel() {
   const targetDate = state.selectedDate;
   const target = new Date(targetDate);
-  const labelFmt = new Intl.DateTimeFormat('ko-KR', {
+  const labelFmt = new Intl.DateTimeFormat('en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -234,13 +234,13 @@ export function renderSelectedDatePanel() {
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
 
-  selectedDateSummary.textContent = `작성 ${createdTodos.length}개 / 완료 ${completedTodos.length}개 / 메모 ${notes.length}개`;
+  selectedDateSummary.textContent = `Created ${createdTodos.length} / Done ${completedTodos.length} / Notes ${notes.length}`;
   selectedCreatedList.innerHTML = '';
   selectedCompletedList.innerHTML = '';
   selectedCalendarNoteList.innerHTML = '';
   if (selectedDateNoteInput) {
-    selectedDateNoteInput.placeholder = `${targetDate} 메모 입력`;
-    selectedDateNoteInput.setAttribute('aria-label', `${targetDate} 메모 입력`);
+    selectedDateNoteInput.placeholder = `Add note for ${targetDate}`;
+    selectedDateNoteInput.setAttribute('aria-label', `Add note for ${targetDate}`);
   }
   if (selectedDateNoteStartDate && !selectedDateNoteStartDate.value) {
     selectedDateNoteStartDate.value = targetDate;
@@ -257,7 +257,7 @@ export function renderSelectedDatePanel() {
   }
 
   if (createdTodos.length === 0) {
-    addEmptyMessage(selectedCreatedList, '선택한 날짜에 생성된 할 일이 없습니다.');
+    addEmptyMessage(selectedCreatedList, 'No tasks created on this date.');
   } else {
     createdTodos.forEach((todo) => {
       const li = document.createElement('li');
@@ -267,10 +267,10 @@ export function renderSelectedDatePanel() {
   }
 
   if (completedTodos.length === 0) {
-    addEmptyMessage(selectedCompletedList, '선택한 날짜에 완료한 할 일이 없습니다.');
+    addEmptyMessage(selectedCompletedList, 'No tasks completed on this date.');
   } else {
     completedTodos.forEach((log) => {
-      const dueDateText = log.dueDate ? ` / 마감일 ${log.dueDate}` : '';
+      const dueDateText = log.dueDate ? ` / Due ${log.dueDate}` : '';
       const li = document.createElement('li');
       li.textContent = `[${_getTodoGroupLabel(log)}] ${log.title} (${formatDisplayDateTime(log.completedAt)}${dueDateText})`;
       selectedCompletedList.appendChild(li);
@@ -278,7 +278,7 @@ export function renderSelectedDatePanel() {
   }
 
   if (notes.length === 0) {
-    addEmptyMessage(selectedCalendarNoteList, '선택한 날짜에 노트/메모가 없습니다.');
+    addEmptyMessage(selectedCalendarNoteList, 'No notes for this date.');
   } else {
     notes.forEach((item) => {
       const li = document.createElement('li');
@@ -298,7 +298,7 @@ export function renderSelectedDatePanel() {
       const period = document.createElement('span');
       period.className = 'selected-note-period';
       const days = getRangeDaysInclusive(item.date, item.endDate || item.date);
-      period.textContent = days > 1 ? `${rangeText} · ${days}일` : rangeText;
+      period.textContent = days > 1 ? `${rangeText} · ${days}d` : rangeText;
 
       const text = createSelectedNoteTextNode(item.text);
 
@@ -341,7 +341,7 @@ export function applyCalendarFormMode() {
     calendarTodoTitleInput.required = isTodo;
   }
   if (calendarSubmitBtn) {
-    calendarSubmitBtn.textContent = isTodo ? '할 일 저장' : '노트 저장';
+    calendarSubmitBtn.textContent = isTodo ? 'Save Task' : 'Save Note';
   }
 }
 
@@ -351,12 +351,12 @@ export function addSelectedDateNote() {
   const text = String(selectedDateNoteInput?.value || '').trim();
   const endDate = clampCalendarRangeEnd(startDate, selectedDateNoteEndDate?.value || startDate);
   if (!text) {
-    _showToast('메모를 입력해 주세요.', 'error');
+    _showToast('Please enter a note.', 'error');
     selectedDateNoteInput?.focus();
     return;
   }
   if (!endDate || endDate < startDate) {
-    _showToast('종료일을 시작일 이후로 선택해 주세요.', 'error');
+    _showToast('End date must be on or after start date.', 'error');
     selectedDateNoteEndDate?.focus();
     return;
   }
@@ -377,7 +377,7 @@ export function addSelectedDateNote() {
   _queueSync();
   _render();
   _showToast(
-    startDate === endDate ? '메모를 추가했습니다.' : `장기 일정을 추가했습니다. (${startDate} ~ ${endDate})`,
+    startDate === endDate ? 'Note added.' : `Long-term schedule added. (${startDate} ~ ${endDate})`,
     'success',
   );
 }
@@ -407,7 +407,7 @@ export function renderCalendar() {
   const totalCells = Math.ceil((startOffset + dayCount) / 7) * 7;
   const rangeLaneMap = buildCalendarRangeLaneMap(year, month);
 
-  const fmt = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long' });
+  const fmt = new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'long' });
   calendarMonthLabel.textContent = fmt.format(state.currentMonth);
 
   calendarGrid.innerHTML = '';
@@ -436,7 +436,7 @@ export function renderCalendar() {
 
     cell.setAttribute('role', 'button');
     cell.setAttribute('tabindex', '0');
-    cell.setAttribute('aria-label', `${month + 1}월 ${dayNumber}일`);
+    cell.setAttribute('aria-label', `${month + 1}/${dayNumber}`);
 
     if (isTodayDate) {
       cell.classList.add('is-today');
@@ -474,15 +474,15 @@ export function renderCalendar() {
     const { scheduledCount, completedCount } = countDailyStats(dateText);
     const dailySummary = document.createElement('p');
     dailySummary.className = 'calendar-summary';
-    const summaryLabel = `일정 ${scheduledCount} / 완료 ${completedCount}`;
+    const summaryLabel = `Tasks ${scheduledCount} / Done ${completedCount}`;
     dailySummary.textContent = compactCalendar
-      ? `일${scheduledCount}/완${completedCount}`
+      ? `T${scheduledCount}/D${completedCount}`
       : summaryLabel;
-    const weekendLabel = weekendType === 'saturday' ? ' 토요일' : weekendType === 'sunday' ? ' 일요일' : '';
-    const holidayDescription = isHoliday ? `, 공휴일(${holidayLabel})` : '';
+    const weekendLabel = weekendType === 'saturday' ? ' Sat' : weekendType === 'sunday' ? ' Sun' : '';
+    const holidayDescription = isHoliday ? `, Holiday(${holidayLabel})` : '';
     cell.setAttribute(
       'aria-label',
-      `${month + 1}월 ${dayNumber}일${weekendLabel}, ${summaryLabel}${holidayDescription}`,
+      `${month + 1}/${dayNumber}${weekendLabel}, ${summaryLabel}${holidayDescription}`,
     );
     cell.appendChild(dailySummary);
 
@@ -491,7 +491,7 @@ export function renderCalendar() {
     if (entries.length === 0) {
       const empty = document.createElement('p');
       empty.className = 'calendar-empty';
-      empty.textContent = '일정 없음';
+      empty.textContent = 'No events';
       cell.appendChild(empty);
     } else {
       const list = document.createElement('ul');
@@ -560,7 +560,7 @@ export function renderCalendar() {
           removeBtn.type = 'button';
           removeBtn.className = 'calendar-remove';
           removeBtn.textContent = 'x';
-          removeBtn.setAttribute('aria-label', '항목 삭제');
+          removeBtn.setAttribute('aria-label', 'Delete item');
           removeBtn.addEventListener('click', (event) => {
             event.stopPropagation();
             state.calendarItems = state.calendarItems.filter((item) => item.id !== entry.id);
@@ -577,7 +577,7 @@ export function renderCalendar() {
       if (hiddenCount > 0) {
         const more = document.createElement('li');
         more.className = 'calendar-more';
-        more.textContent = `+${hiddenCount}건`;
+        more.textContent = `+${hiddenCount} more`;
         list.appendChild(more);
       }
 

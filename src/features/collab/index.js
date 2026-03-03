@@ -282,7 +282,7 @@ function ensureBucketShareToggle(bucket) {
   const enabled = isBucketShareEnabled(bucket);
   const ready = runtime.isServerSync && !!runtime.authUser && !!runtime.collabSummary;
   button.disabled = !ready;
-  button.textContent = enabled ? '공유 ON' : '공유 시작';
+  button.textContent = enabled ? 'Sharing ON' : 'Start Sharing';
   button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
   return button;
 }
@@ -315,7 +315,7 @@ function getCollabContextsForBucket(bucket) {
       ownerUserId: Number(entry.ownerUserId),
       bucketKey: entry.bucketKey,
       source: 'owned',
-      label: `내 공유버킷 (${getBucketLabel(entry.bucketKey)})`,
+      label: `My shared bucket (${getBucketLabel(entry.bucketKey)})`,
     });
   });
 
@@ -335,7 +335,7 @@ function getCollabContextsForBucket(bucket) {
       ownerUserId: Number(entry.ownerUserId),
       bucketKey: entry.bucketKey,
       source: 'joined',
-      label: `${ownerPublicId} 공유버킷`,
+      label: `${ownerPublicId} shared bucket`,
     });
   });
 
@@ -347,7 +347,7 @@ function getCollabContextsForBucket(bucket) {
         ownerUserId: Number(runtime.authUser.id),
         bucketKey: bucket,
         source: 'owned',
-        label: `내 공유버킷 (${getBucketLabel(bucket)})`,
+        label: `My shared bucket (${getBucketLabel(bucket)})`,
       });
     }
   }
@@ -556,7 +556,7 @@ function syncCollabPolling() {
 async function savePublicIdToServer(inputPublicId) {
   const publicId = normalizePublicIdInput(inputPublicId);
   if (!isValidPublicId(publicId)) {
-    showToast('고유ID는 4~20자, 소문자/숫자/_만 가능합니다.', 'error');
+    showToast('Public ID must be 4-20 chars: lowercase, numbers, _ only.', 'error');
     return false;
   }
 
@@ -570,32 +570,32 @@ async function savePublicIdToServer(inputPublicId) {
   );
 
   if (response.status === 409) {
-    showToast('이미 사용 중인 고유ID입니다.', 'error');
+    showToast('This public ID is already taken.', 'error');
     return false;
   }
   if (!response.ok) {
     const payload = await safeReadJson(response);
     if (response.status === 401) {
-      showToast('로그인이 만료되었습니다. 다시 로그인해 주세요.', 'error');
+      showToast('Session expired. Please log in again.', 'error');
       return false;
     }
     if (payload?.error === 'invalid_csrf_token') {
-      showToast('보안 토큰이 갱신되었습니다. 다시 저장해 주세요.', 'error');
+      showToast('Security token renewed. Please save again.', 'error');
       return false;
     }
     if (payload?.error === 'invalid_payload') {
-      showToast('고유ID 형식을 확인해 주세요. (4~20자, 소문자/숫자/_)', 'error');
+      showToast('Invalid public ID format. (4-20 chars, lowercase/numbers/_)', 'error');
       return false;
     }
     if (response.status === 404 || payload?.error === 'not_found') {
-      showToast('사용자 정보를 찾을 수 없습니다. 다시 로그인해 주세요.', 'error');
+      showToast('User not found. Please log in again.', 'error');
       return false;
     }
     if (response.status >= 500 || payload?.error === 'internal_server_error') {
-      showToast('서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.', 'error');
+      showToast('Server error. Please try again later.', 'error');
       return false;
     }
-    showToast('고유ID 저장에 실패했습니다.', 'error');
+    showToast('Failed to save public ID.', 'error');
     return false;
   }
 
@@ -626,7 +626,7 @@ function updateProfileAliasUI() {
     return;
   }
   const label = getProfileDisplayName();
-  userAliasPreviewEl.textContent = label || '호칭 미설정';
+  userAliasPreviewEl.textContent = label || 'No alias set';
 }
 
 function applyAuthState(me) {
@@ -659,24 +659,24 @@ function updateAuthUI() {
   updateProfileAliasUI();
   if (runtime.isServerSync && runtime.authUser) {
     const label = runtime.authUser.nickname || runtime.authUser.email || `kakao-${runtime.authUser.kakaoId || ''}`;
-    authStatusEl.textContent = `로그인 상태: ${label}`;
-    authBtn.innerHTML = '<span>로그아웃</span>';
+    authStatusEl.textContent = `Logged in: ${label}`;
+    authBtn.innerHTML = '<span>Logout</span>';
     if (profilePublicIdInput) {
       profilePublicIdInput.disabled = false;
       profilePublicIdInput.value = normalizePublicIdInput(runtime.collabProfile.publicId || runtime.authUser.publicId || '');
     }
     if (profilePublicIdHint) {
-      profilePublicIdHint.textContent = '형식: a-z, 0-9, _ / 4~20자 ( @, -, 공백은 자동 변환 )';
+      profilePublicIdHint.textContent = 'Format: a-z, 0-9, _ / 4-20 chars (@, -, spaces auto-converted)';
     }
   } else {
-    authStatusEl.textContent = '로그인 필요';
-    authBtn.innerHTML = '<span class="kakao-logo" aria-hidden="true">K</span><span>카카오 로그인</span>';
+    authStatusEl.textContent = 'Login required';
+    authBtn.innerHTML = '<span class="kakao-logo" aria-hidden="true">K</span><span>Kakao Login</span>';
     if (profilePublicIdInput) {
       profilePublicIdInput.disabled = true;
       profilePublicIdInput.value = '';
     }
     if (profilePublicIdHint) {
-      profilePublicIdHint.textContent = '로그인 후 설정할 수 있습니다.';
+      profilePublicIdHint.textContent = 'Login required to set public ID.';
     }
   }
 }
@@ -979,12 +979,12 @@ function ensureSharedSection(bucket) {
   head.className = 'shared-todo-head';
 
   const title = document.createElement('strong');
-  title.textContent = '공유 작업';
+  title.textContent = 'Shared Tasks';
   head.appendChild(title);
 
   const contextSelect = document.createElement('select');
   contextSelect.className = 'shared-context-select';
-  contextSelect.setAttribute('aria-label', '공유 컨텍스트 선택');
+  contextSelect.setAttribute('aria-label', 'Select sharing context');
   head.appendChild(contextSelect);
   section.appendChild(head);
 
@@ -996,7 +996,7 @@ function ensureSharedSection(bucket) {
   titleInput.type = 'text';
   titleInput.className = 'shared-compose-title';
   titleInput.maxLength = 120;
-  titleInput.placeholder = '공유 작업 제목';
+  titleInput.placeholder = 'Shared task title';
   titleInput.required = true;
   composeForm.appendChild(titleInput);
 
@@ -1004,7 +1004,7 @@ function ensureSharedSection(bucket) {
   detailInput.className = 'shared-compose-details';
   detailInput.rows = 2;
   detailInput.maxLength = 1200;
-  detailInput.placeholder = '상세 내용';
+  detailInput.placeholder = 'Details';
   composeForm.appendChild(detailInput);
 
   const metaRow = document.createElement('div');
@@ -1013,21 +1013,21 @@ function ensureSharedSection(bucket) {
   const priority = document.createElement('select');
   priority.className = 'shared-compose-priority';
   priority.innerHTML = `
-    <option value="1">높음</option>
-    <option value="2" selected>보통</option>
-    <option value="3">낮음</option>
+    <option value="1">High</option>
+    <option value="2" selected>Normal</option>
+    <option value="3">Low</option>
   `;
   metaRow.appendChild(priority);
 
   const dueDate = document.createElement('input');
   dueDate.type = 'date';
   dueDate.className = 'shared-compose-due';
-  dueDate.setAttribute('aria-label', '공유 작업 마감일');
+  dueDate.setAttribute('aria-label', 'Shared task due date');
   metaRow.appendChild(dueDate);
 
   const submitBtn = document.createElement('button');
   submitBtn.type = 'submit';
-  submitBtn.textContent = '공유 추가';
+  submitBtn.textContent = 'Add Shared';
   metaRow.appendChild(submitBtn);
 
   composeForm.appendChild(metaRow);
@@ -1061,10 +1061,10 @@ function getAuthorTag(author) {
 }
 
 function getSharedTodoMetaText(todo) {
-  const priority = priorityLabel[todo.priority] || '보통';
-  const dueDateText = todo.dueDate ? ` / 마감일 ${todo.dueDate}` : '';
-  const doneText = todo.isDone ? ' / 완료' : '';
-  return `우선순위: ${priority}${dueDateText}${doneText} / rev ${todo.revision}`;
+  const priority = priorityLabel[todo.priority] || 'Normal';
+  const dueDateText = todo.dueDate ? ` / Due ${todo.dueDate}` : '';
+  const doneText = todo.isDone ? ' / Done' : '';
+  return `Priority: ${priority}${dueDateText}${doneText} / rev ${todo.revision}`;
 }
 
 function createSharedCommentItem(comment, context) {
@@ -1103,7 +1103,7 @@ function createSharedCommentItem(comment, context) {
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'todo-mini-delete';
-    deleteBtn.textContent = '삭제';
+    deleteBtn.textContent = 'Del';
     deleteBtn.dataset.sharedAction = 'delete-comment';
     deleteBtn.dataset.commentId = comment.id;
     li.appendChild(deleteBtn);
@@ -1121,7 +1121,7 @@ function renderSharedComments(listEl, todo, context) {
   if (comments.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'todo-inline-empty';
-    empty.textContent = '의견이 없습니다.';
+    empty.textContent = 'No comments.';
     listEl.appendChild(empty);
     return;
   }
@@ -1143,11 +1143,11 @@ function createSharedTodoItem(todo, context) {
   markerRow.className = 'shared-marker-row';
   const badge = document.createElement('span');
   badge.className = 'shared-badge';
-  badge.textContent = '공유';
+  badge.textContent = 'Shared';
   markerRow.appendChild(badge);
   const author = document.createElement('span');
   author.className = 'shared-author';
-  author.textContent = `작성자 ${getAuthorTag(todo.author)}`;
+  author.textContent = `Author: ${getAuthorTag(todo.author)}`;
   markerRow.appendChild(author);
   main.appendChild(markerRow);
 
@@ -1176,9 +1176,9 @@ function createSharedTodoItem(todo, context) {
   const prioritySelect = document.createElement('select');
   prioritySelect.className = 'shared-todo-priority';
   prioritySelect.innerHTML = `
-    <option value="1">높음</option>
-    <option value="2">보통</option>
-    <option value="3">낮음</option>
+    <option value="1">High</option>
+    <option value="2">Normal</option>
+    <option value="3">Low</option>
   `;
   prioritySelect.value = String(todo.priority || 2);
   controls.appendChild(prioritySelect);
@@ -1195,14 +1195,14 @@ function createSharedTodoItem(todo, context) {
   const saveBtn = document.createElement('button');
   saveBtn.type = 'button';
   saveBtn.className = 'complete';
-  saveBtn.textContent = '저장';
+  saveBtn.textContent = 'Save';
   saveBtn.dataset.sharedAction = 'save';
   actions.appendChild(saveBtn);
 
   const toggleDoneBtn = document.createElement('button');
   toggleDoneBtn.type = 'button';
   toggleDoneBtn.className = 'complete';
-  toggleDoneBtn.textContent = todo.isDone ? '미완료' : '완료';
+  toggleDoneBtn.textContent = todo.isDone ? 'Undo' : 'Done';
   toggleDoneBtn.dataset.sharedAction = 'toggle-done';
   actions.appendChild(toggleDoneBtn);
 
@@ -1210,7 +1210,7 @@ function createSharedTodoItem(todo, context) {
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'delete';
-    deleteBtn.textContent = '삭제';
+    deleteBtn.textContent = 'Del';
     deleteBtn.dataset.sharedAction = 'delete';
     actions.appendChild(deleteBtn);
   }
@@ -1218,7 +1218,7 @@ function createSharedTodoItem(todo, context) {
   const commentToggleBtn = document.createElement('button');
   commentToggleBtn.type = 'button';
   commentToggleBtn.className = 'ghost-btn';
-  commentToggleBtn.textContent = '의견';
+  commentToggleBtn.textContent = 'Comments';
   commentToggleBtn.dataset.sharedAction = 'toggle-comments';
   actions.appendChild(commentToggleBtn);
 
@@ -1239,12 +1239,12 @@ function createSharedTodoItem(todo, context) {
   commentInput.className = 'shared-comment-input';
   commentInput.rows = 2;
   commentInput.maxLength = 1200;
-  commentInput.placeholder = '의견을 작성하세요';
+  commentInput.placeholder = 'Write a comment';
   commentComposer.appendChild(commentInput);
   const commentSubmit = document.createElement('button');
   commentSubmit.type = 'button';
   commentSubmit.className = 'complete';
-  commentSubmit.textContent = '등록';
+  commentSubmit.textContent = 'Post';
   commentSubmit.dataset.sharedAction = 'add-comment';
   commentComposer.appendChild(commentSubmit);
   commentPanel.appendChild(commentComposer);
@@ -1280,7 +1280,7 @@ function renderSharedTodosForBucket(bucket) {
     Array.from(composeForm.elements).forEach((input) => {
       input.disabled = true;
     });
-    setSharedListEmpty(listEl, '연결된 공유 버킷이 없습니다.');
+    setSharedListEmpty(listEl, 'No connected shared buckets.');
     return;
   }
 
@@ -1302,7 +1302,7 @@ function renderSharedTodosForBucket(bucket) {
   });
 
   if (!active) {
-    setSharedListEmpty(listEl, '공유 컨텍스트를 선택하면 작업이 표시됩니다.');
+    setSharedListEmpty(listEl, 'Select a sharing context to view tasks.');
     return;
   }
 
@@ -1311,7 +1311,7 @@ function renderSharedTodosForBucket(bucket) {
   if (todos.length === 0) {
     const empty = document.createElement('li');
     empty.className = 'todo-inline-empty';
-    empty.textContent = '공유 작업이 없습니다.';
+    empty.textContent = 'No shared tasks.';
     listEl.appendChild(empty);
     return;
   }
@@ -1332,8 +1332,8 @@ function renderCollabPanel() {
   if (collabProfileBadgeEl) {
     const publicId = normalizePublicIdInput(runtime.collabProfile.publicId || runtime.authUser?.publicId || '');
     collabProfileBadgeEl.textContent = ready
-      ? `고유ID: ${publicId ? `@${publicId}` : '호칭 미설정'}`
-      : '로그인 후 공유 버킷을 설정할 수 있습니다.';
+      ? `Public ID: ${publicId ? `@${publicId}` : 'Not set'}`
+      : 'Log in to configure shared buckets.';
   }
 
   if (!ready || !runtime.collabSummary) {
@@ -1342,13 +1342,13 @@ function renderCollabPanel() {
       collabInviteBucketSelectEl.disabled = true;
     }
     if (collabReceivedInvitesEl) {
-      setSharedListEmpty(collabReceivedInvitesEl, '받은 초대가 없습니다.');
+      setSharedListEmpty(collabReceivedInvitesEl, 'No received invites.');
     }
     if (collabSentInvitesEl) {
-      setSharedListEmpty(collabSentInvitesEl, '보낸 초대가 없습니다.');
+      setSharedListEmpty(collabSentInvitesEl, 'No sent invites.');
     }
     if (collabMembershipListEl) {
-      setSharedListEmpty(collabMembershipListEl, '공유 버킷 참여 정보가 없습니다.');
+      setSharedListEmpty(collabMembershipListEl, 'No shared bucket memberships.');
     }
     if (collabInviteTargetInputEl) {
       collabInviteTargetInputEl.disabled = true;
@@ -1365,7 +1365,7 @@ function renderCollabPanel() {
     if (inviteableBuckets.length === 0) {
       const option = document.createElement('option');
       option.value = '';
-      option.textContent = '공유 ON 버킷 없음';
+      option.textContent = 'No sharing-enabled buckets';
       collabInviteBucketSelectEl.appendChild(option);
       collabInviteBucketSelectEl.disabled = true;
     } else {
@@ -1386,7 +1386,7 @@ function renderCollabPanel() {
     const received = Array.isArray(runtime.collabSummary.receivedInvites) ? runtime.collabSummary.receivedInvites : [];
     collabReceivedInvitesEl.innerHTML = '';
     if (received.length === 0) {
-      setSharedListEmpty(collabReceivedInvitesEl, '받은 초대가 없습니다.');
+      setSharedListEmpty(collabReceivedInvitesEl, 'No received invites.');
     } else {
       received.forEach((invite) => {
         const li = document.createElement('li');
@@ -1396,7 +1396,7 @@ function renderCollabPanel() {
           const acceptBtn = document.createElement('button');
           acceptBtn.type = 'button';
           acceptBtn.className = 'complete';
-          acceptBtn.textContent = '수락';
+          acceptBtn.textContent = 'Accept';
           acceptBtn.dataset.collabAction = 'accept-invite';
           acceptBtn.dataset.inviteId = invite.id;
           li.appendChild(acceptBtn);
@@ -1404,7 +1404,7 @@ function renderCollabPanel() {
           const declineBtn = document.createElement('button');
           declineBtn.type = 'button';
           declineBtn.className = 'delete';
-          declineBtn.textContent = '거절';
+          declineBtn.textContent = 'Decline';
           declineBtn.dataset.collabAction = 'decline-invite';
           declineBtn.dataset.inviteId = invite.id;
           li.appendChild(declineBtn);
@@ -1418,7 +1418,7 @@ function renderCollabPanel() {
     const sent = Array.isArray(runtime.collabSummary.sentInvites) ? runtime.collabSummary.sentInvites : [];
     collabSentInvitesEl.innerHTML = '';
     if (sent.length === 0) {
-      setSharedListEmpty(collabSentInvitesEl, '보낸 초대가 없습니다.');
+      setSharedListEmpty(collabSentInvitesEl, 'No sent invites.');
     } else {
       sent.forEach((invite) => {
         const li = document.createElement('li');
@@ -1428,7 +1428,7 @@ function renderCollabPanel() {
           const cancelBtn = document.createElement('button');
           cancelBtn.type = 'button';
           cancelBtn.className = 'delete';
-          cancelBtn.textContent = '취소';
+          cancelBtn.textContent = 'Cancel';
           cancelBtn.dataset.collabAction = 'cancel-invite';
           cancelBtn.dataset.inviteId = invite.id;
           li.appendChild(cancelBtn);
@@ -1447,11 +1447,11 @@ function renderCollabPanel() {
       (Array.isArray(entry.members) ? entry.members : []).forEach((member) => {
         const li = document.createElement('li');
         li.className = 'collab-list-item';
-        li.textContent = `[내 버킷 ${getBucketLabel(entry.bucketKey)}] ${member.publicId ? `@${member.publicId}` : `USER-${member.userId}`}`;
+        li.textContent = `[My ${getBucketLabel(entry.bucketKey)}] ${member.publicId ? `@${member.publicId}` : `USER-${member.userId}`}`;
         const removeBtn = document.createElement('button');
         removeBtn.type = 'button';
         removeBtn.className = 'delete';
-        removeBtn.textContent = '제거';
+        removeBtn.textContent = 'Remove';
         removeBtn.dataset.collabAction = 'remove-membership';
         removeBtn.dataset.membershipId = String(member.membershipId || '');
         li.appendChild(removeBtn);
@@ -1462,11 +1462,11 @@ function renderCollabPanel() {
     joined.forEach((entry) => {
       const li = document.createElement('li');
       li.className = 'collab-list-item';
-      li.textContent = `[참여 ${getBucketLabel(entry.bucketKey)}] ${getAuthorTag(entry.owner)}`;
+      li.textContent = `[Joined ${getBucketLabel(entry.bucketKey)}] ${getAuthorTag(entry.owner)}`;
       const leaveBtn = document.createElement('button');
       leaveBtn.type = 'button';
       leaveBtn.className = 'delete';
-      leaveBtn.textContent = '나가기';
+      leaveBtn.textContent = 'Leave';
       leaveBtn.dataset.collabAction = 'remove-membership';
       leaveBtn.dataset.membershipId = String(entry.membershipId || '');
       li.appendChild(leaveBtn);
@@ -1474,7 +1474,7 @@ function renderCollabPanel() {
     });
 
     if (!collabMembershipListEl.children.length) {
-      setSharedListEmpty(collabMembershipListEl, '공유 버킷 참여 정보가 없습니다.');
+      setSharedListEmpty(collabMembershipListEl, 'No shared bucket memberships.');
     }
   }
 }
@@ -1485,12 +1485,12 @@ async function submitCollabInvite() {
   }
   const bucketKey = collabInviteBucketSelectEl.value;
   if (!bucketKey || !isBucketShareEnabled(bucketKey)) {
-    showToast('버킷 공유를 먼저 켜 주세요.', 'error');
+    showToast('Please enable bucket sharing first.', 'error');
     return;
   }
   const targetPublicId = normalizePublicIdInput(collabInviteTargetInputEl.value);
   if (!isValidPublicId(targetPublicId)) {
-    showToast('상대 고유ID 형식이 올바르지 않습니다.', 'error');
+    showToast('Invalid target public ID format.', 'error');
     return;
   }
 
@@ -1503,14 +1503,14 @@ async function submitCollabInvite() {
     { withCsrf: true },
   );
   if (!response.ok) {
-    showToast('초대 전송에 실패했습니다.', 'error');
+    showToast('Failed to send invite.', 'error');
     return;
   }
 
   collabInviteTargetInputEl.value = '';
   await refreshCollabSummary({ includeTodos: true });
   render();
-  showToast('초대를 보냈습니다.', 'success');
+  showToast('Invite sent.', 'success');
 }
 
 async function toggleBucketShareSetting(bucket) {
@@ -1519,7 +1519,7 @@ async function toggleBucketShareSetting(bucket) {
     return;
   }
   if (!runtime.isServerSync || !runtime.authUser) {
-    showToast('로그인 후 사용할 수 있습니다.', 'error');
+    showToast('Login required.', 'error');
     return;
   }
 
@@ -1533,13 +1533,13 @@ async function toggleBucketShareSetting(bucket) {
     { withCsrf: true },
   );
   if (!response.ok) {
-    showToast('버킷 공유 설정 변경에 실패했습니다.', 'error');
+    showToast('Failed to change bucket sharing settings.', 'error');
     return;
   }
 
   await refreshCollabSummary({ includeTodos: true });
   render();
-  showToast(nextEnabled ? `${getBucketLabel(targetBucket)} 공유를 켰습니다.` : `${getBucketLabel(targetBucket)} 공유를 껐습니다.`, 'success');
+  showToast(nextEnabled ? `${getBucketLabel(targetBucket)} sharing enabled.` : `${getBucketLabel(targetBucket)} sharing disabled.`, 'success');
 }
 
 async function handleCollabPanelAction(buttonEl) {
@@ -1572,7 +1572,7 @@ async function handleCollabPanelAction(buttonEl) {
       { withCsrf: true },
     );
     if (!response.ok) {
-      showToast('요청 처리에 실패했습니다.', 'error');
+      showToast('Failed to process request.', 'error');
       return;
     }
     await refreshCollabSummary({ includeTodos: true });
@@ -1591,7 +1591,7 @@ async function handleCollabPanelAction(buttonEl) {
       { withCsrf: true },
     );
     if (!response.ok) {
-      showToast('멤버 변경에 실패했습니다.', 'error');
+      showToast('Failed to update member.', 'error');
       return;
     }
     await refreshCollabSummary({ includeTodos: true });
@@ -1606,7 +1606,7 @@ async function submitSharedComposeForm(formEl) {
   const bucket = formEl.dataset.bucket;
   const context = ensureActiveSharedContext(bucket);
   if (!context) {
-    showToast('공유 컨텍스트를 선택해 주세요.', 'error');
+    showToast('Please select a sharing context.', 'error');
     return;
   }
 
@@ -1616,7 +1616,7 @@ async function submitSharedComposeForm(formEl) {
   const dueDateEl = formEl.querySelector('.shared-compose-due');
   const title = String(titleEl?.value || '').trim();
   if (!title) {
-    showToast('공유 작업 제목을 입력해 주세요.', 'error');
+    showToast('Please enter a shared task title.', 'error');
     return;
   }
 
@@ -1635,7 +1635,7 @@ async function submitSharedComposeForm(formEl) {
   );
 
   if (!response.ok) {
-    showToast('공유 작업 추가에 실패했습니다.', 'error');
+    showToast('Failed to add shared task.', 'error');
     return;
   }
 
@@ -1723,7 +1723,7 @@ async function deleteSharedTodo(todoId) {
     { withCsrf: true },
   );
   if (!response.ok) {
-    showToast('공유 작업 삭제에 실패했습니다.', 'error');
+    showToast('Failed to delete shared task.', 'error');
     return;
   }
 
@@ -1747,7 +1747,7 @@ async function addSharedComment(itemEl) {
   const input = panel?.querySelector('.shared-comment-input');
   const body = String(input?.value || '').trim();
   if (!body) {
-    showToast('의견 내용을 입력해 주세요.', 'error');
+    showToast('Please enter a comment.', 'error');
     return;
   }
 
@@ -1760,7 +1760,7 @@ async function addSharedComment(itemEl) {
     { withCsrf: true },
   );
   if (!response.ok) {
-    showToast('의견 등록에 실패했습니다.', 'error');
+    showToast('Failed to add comment.', 'error');
     return;
   }
 
@@ -1778,7 +1778,7 @@ async function deleteSharedComment(commentId, todoId) {
     { withCsrf: true },
   );
   if (!response.ok) {
-    showToast('의견 삭제에 실패했습니다.', 'error');
+    showToast('Failed to delete comment.', 'error');
     return;
   }
   await refreshSharedComments(todoId);

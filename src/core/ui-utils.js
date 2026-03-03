@@ -31,12 +31,12 @@ export function showBrokenTextFilteredToast(context, value) {
 
   const marker = findBrokenTextMarker(text);
   if (marker) {
-    _showToast(`${context}에서 깨진 문자열 패턴("${marker}")이 감지되어 제외했습니다.`, 'error');
+    _showToast(`Broken text pattern ("${marker}") detected in ${context} and excluded.`, 'error');
     return;
   }
 
   if (/[\uFFFD]/u.test(text)) {
-    _showToast(`${context}에서 치환 문자(U+FFFD)가 감지되어 제외했습니다.`, 'error');
+    _showToast(`Replacement character (U+FFFD) detected in ${context} and excluded.`, 'error');
   }
 }
 
@@ -122,11 +122,11 @@ export function renderFatalErrorScreen(error) {
 
   const title = document.createElement('h2');
   title.className = 'fatal-error-title';
-  title.textContent = '앱 오류가 발생했습니다';
+  title.textContent = 'An app error occurred';
 
   const description = document.createElement('p');
   description.className = 'fatal-error-description';
-  description.textContent = '화면을 복구하지 못했습니다. 다시 시도하거나 새로고침해 주세요.';
+  description.textContent = 'Could not recover the screen. Please retry or refresh the page.';
 
   const actions = document.createElement('div');
   actions.className = 'fatal-error-actions';
@@ -134,7 +134,7 @@ export function renderFatalErrorScreen(error) {
   const retryBtn = document.createElement('button');
   retryBtn.type = 'button';
   retryBtn.className = 'ghost-btn';
-  retryBtn.textContent = '다시 시도';
+  retryBtn.textContent = 'Retry';
   retryBtn.addEventListener('click', () => {
     dismissFatalErrorScreen();
     // fallback render will be handled by bootstrap catch path if needed
@@ -143,7 +143,7 @@ export function renderFatalErrorScreen(error) {
   const reloadBtn = document.createElement('button');
   reloadBtn.type = 'button';
   reloadBtn.className = 'project-add-btn';
-  reloadBtn.textContent = '새로고침';
+  reloadBtn.textContent = 'Reload';
   reloadBtn.addEventListener('click', () => {
     window.location.reload();
   });

@@ -195,8 +195,8 @@ function syncBucketActionMenus() {
 function buildTodoMetaText(todo) {
   const dateText = todo.dueDate ? ` ${todo.dueDate}` : '';
   const lane = _deps.getProjectLaneName(todo.projectLaneId);
-  const projectText = lane ? ` / 분류: ${lane}` : '';
-  return `우선순위: ${priorityLabel[todo.priority] || '보통'}${dateText}${projectText}`;
+  const projectText = lane ? ` / Lane: ${lane}` : '';
+  return `Priority: ${priorityLabel[todo.priority] || 'Normal'}${dateText}${projectText}`;
 }
 
 function renderTodoSubtaskList(listEl, todo, onUpdate) {
@@ -219,11 +219,11 @@ function renderTodoSubtaskList(listEl, todo, onUpdate) {
     const toggleBtn = document.createElement('button');
     toggleBtn.type = 'button';
     toggleBtn.className = 'todo-subtask-state-toggle';
-    toggleBtn.textContent = subtask.done ? '완료' : '미완';
+    toggleBtn.textContent = subtask.done ? 'Done' : 'Todo';
     toggleBtn.setAttribute('aria-pressed', String(Boolean(subtask.done)));
     toggleBtn.setAttribute(
       'aria-label',
-      subtask.done ? '세부 항목을 미완 상태로 변경' : '세부 항목을 완료 상태로 변경',
+      subtask.done ? 'Mark subtask as incomplete' : 'Mark subtask as complete',
     );
     toggleBtn.addEventListener('click', () => {
       subtask.done = !subtask.done;
@@ -244,8 +244,8 @@ function renderTodoSubtaskList(listEl, todo, onUpdate) {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'todo-mini-delete';
-    removeBtn.textContent = '삭제';
-    removeBtn.setAttribute('aria-label', '세부 항목 삭제');
+    removeBtn.textContent = 'Del';
+    removeBtn.setAttribute('aria-label', 'Delete subtask');
     removeBtn.addEventListener('click', () => {
       todo.subtasks = subtasks.filter((entry) => entry.id !== subtask.id);
       renderTodoSubtaskList(listEl, todo, onUpdate);
@@ -331,8 +331,8 @@ function renderTodoMemoList(listEl, todo) {
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
     removeBtn.className = 'todo-mini-delete';
-    removeBtn.textContent = '삭제';
-    removeBtn.setAttribute('aria-label', '메모 삭제');
+    removeBtn.textContent = 'Del';
+    removeBtn.setAttribute('aria-label', 'Delete memo');
     removeBtn.addEventListener('click', () => {
       todo.memos = memos.filter((entry) => entry.id !== memo.id);
       renderTodoMemoList(listEl, todo);
@@ -446,14 +446,14 @@ function renderTodoItems(listEl, todos) {
                          (todo.memos && todo.memos.length > 0);
       if (hasContent) {
         collapsible.hidden = false;
-        detailToggle.textContent = '접기';
+        detailToggle.textContent = 'Collapse';
         detailToggle.setAttribute('aria-expanded', 'true');
       }
       detailToggle.addEventListener('click', (e) => {
         e.preventDefault();
         const expanded = !collapsible.hidden;
         collapsible.hidden = expanded;
-        detailToggle.textContent = expanded ? '상세 보기' : '접기';
+        detailToggle.textContent = expanded ? 'Details' : 'Collapse';
         detailToggle.setAttribute('aria-expanded', String(!expanded));
       });
     }
@@ -467,16 +467,16 @@ function renderTodoItems(listEl, todos) {
       const memoToggle = document.createElement('button');
       memoToggle.type = 'button';
       memoToggle.className = 'todo-memo-toggle action-toggle';
-      memoToggle.textContent = '메모';
+      memoToggle.textContent = 'Memo';
       memoToggle.setAttribute('aria-expanded', 'false');
-      memoToggle.setAttribute('aria-label', '메모 작성 토글');
+      memoToggle.setAttribute('aria-label', 'Toggle memo composer');
 
       const subtaskToggle = document.createElement('button');
       subtaskToggle.type = 'button';
       subtaskToggle.className = 'todo-subtask-toggle action-toggle';
-      subtaskToggle.textContent = '세부할일';
+      subtaskToggle.textContent = 'Subtask';
       subtaskToggle.setAttribute('aria-expanded', 'false');
-      subtaskToggle.setAttribute('aria-label', '세부할일 작성 토글');
+      subtaskToggle.setAttribute('aria-label', 'Toggle subtask composer');
 
       createdActionWrap.appendChild(subtaskToggle);
       createdActionWrap.appendChild(memoToggle);
@@ -610,14 +610,14 @@ function renderTodayNoteHighlights(listEl, notes) {
     const main = document.createElement('div');
     main.className = 'todo-main';
 
-    const title = createSelectedNoteTextNode(`할일 메모: ${note.text}`);
+    const title = createSelectedNoteTextNode(`Note: ${note.text}`);
     title.classList.add('todo-note-title');
 
     const meta = document.createElement('span');
     meta.className = 'meta';
     meta.textContent = note.date === note.endDate
-      ? `날짜: ${note.date}`
-      : `기간: ${note.date} ~ ${note.endDate}`;
+      ? `Date: ${note.date}`
+      : `Period: ${note.date} ~ ${note.endDate}`;
 
     main.append(title, meta);
 
@@ -630,7 +630,7 @@ function renderTodayNoteHighlights(listEl, notes) {
     const focusBtn = document.createElement('button');
     focusBtn.type = 'button';
     focusBtn.className = 'complete';
-    focusBtn.textContent = '이동';
+    focusBtn.textContent = 'Go';
     focusBtn.addEventListener('click', () => {
       state.selectedDate = note.date;
       const monthDate = new Date(note.date);
@@ -641,7 +641,7 @@ function renderTodayNoteHighlights(listEl, notes) {
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className = 'delete';
-    deleteBtn.textContent = '삭제';
+    deleteBtn.textContent = 'Del';
     deleteBtn.addEventListener('click', () => {
       state.calendarItems = state.calendarItems.filter((entry) => entry.id !== note.id);
       render();

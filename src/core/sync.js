@@ -100,7 +100,7 @@ export function mergeBucketDefaultsFromMeta(metaPayload = {}) {
     const fromMeta = typeof metaPayload.defaultBucketLabels?.[key] === 'string'
       ? String(metaPayload.defaultBucketLabels[key]).trim()
       : '';
-    acc[key] = fromMeta || `버킷 ${index + 1}`;
+    acc[key] = fromMeta || `Bucket ${index + 1}`;
     return acc;
   }, {});
 
