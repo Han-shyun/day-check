@@ -3,6 +3,7 @@ import { HOLIDAYS_BY_YEAR, typeLabel } from '../../core/constants.js';
 import {
   selectedDateLabel,
   selectedDateSummary,
+  selectedDueList,
   selectedCreatedList,
   selectedCompletedList,
   selectedCalendarNoteList,
@@ -218,6 +219,7 @@ export function renderSelectedDatePanel() {
 
   selectedDateLabel.textContent = labelFmt.format(target);
 
+  const dueTodos = _sortTodos(state.todos.filter((todo) => parseIsoDate(todo.dueDate) === targetDate));
   const createdTodos = _sortTodos(state.todos.filter((todo) => parseIsoDate(todo.createdAt) === targetDate));
   const completedTodos = state.doneLog.filter((log) => parseIsoDate(log.completedAt) === targetDate);
   const notes = state.calendarItems
@@ -234,7 +236,10 @@ export function renderSelectedDatePanel() {
       return new Date(b.createdAt) - new Date(a.createdAt);
     });
 
-  selectedDateSummary.textContent = `Created ${createdTodos.length} / Done ${completedTodos.length} / Notes ${notes.length}`;
+  selectedDateSummary.textContent = `Due ${dueTodos.length} / Created ${createdTodos.length} / Done ${completedTodos.length} / Notes ${notes.length}`;
+  if (selectedDueList) {
+    selectedDueList.innerHTML = '';
+  }
   selectedCreatedList.innerHTML = '';
   selectedCompletedList.innerHTML = '';
   selectedCalendarNoteList.innerHTML = '';
@@ -253,6 +258,18 @@ export function renderSelectedDatePanel() {
     selectedDateNoteEndDate.min = noteStart;
     if (!selectedDateNoteEndDate.value || selectedDateNoteEndDate.value < noteStart) {
       selectedDateNoteEndDate.value = noteStart;
+    }
+  }
+
+  if (selectedDueList) {
+    if (dueTodos.length === 0) {
+      addEmptyMessage(selectedDueList, 'No tasks due on this date.');
+    } else {
+      dueTodos.forEach((todo) => {
+        const li = document.createElement('li');
+        li.textContent = `[${_getTodoGroupLabel(todo)}] ${todo.title}`;
+        selectedDueList.appendChild(li);
+      });
     }
   }
 

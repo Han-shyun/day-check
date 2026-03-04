@@ -1,6 +1,8 @@
 ﻿import { bucketApi } from './api.js';
 import { bucketModel, normalizeBucketLabel, sanitizeBucketId } from './model.js';
 import { createBucketUi } from './ui.js';
+import { autoUpdate, computePosition, flip, offset, shift, size } from '../../vendor/floating-ui.dom.browser.mjs';
+import Sortable from '../../vendor/sortable.esm.js';
 import { state, runtime } from '../../core/app-context.js';
 import { buckets, defaultBucketLabels } from '../../core/constants.js';
 import {
@@ -53,6 +55,74 @@ let _deps = {
   syncBucketActionMenus: () => {},
   syncBucketOrderFromDom: () => {},
 };
+
+const _bucketMenuAutoUpdates = new WeakMap();
+const _laneCreateAutoUpdates = new WeakMap();
+
+function stopBucketMenuAutoUpdate(menuList) {
+  if (!menuList) {
+    return;
+  }
+  const cleanup = _bucketMenuAutoUpdates.get(menuList);
+  if (typeof cleanup === 'function') {
+    cleanup();
+  }
+  _bucketMenuAutoUpdates.delete(menuList);
+  menuList.classList.remove('is-open');
+  menuList.style.removeProperty('position');
+  menuList.style.removeProperty('left');
+  menuList.style.removeProperty('top');
+  menuList.style.removeProperty('right');
+}
+
+function positionBucketActionMenu(toggleBtn, menuList) {
+  if (!toggleBtn || !menuList || menuList.hidden) {
+    return;
+  }
+
+  computePosition(toggleBtn, menuList, {
+    strategy: 'fixed',
+    placement: 'bottom-end',
+    middleware: [
+      offset(6),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+      size({
+        padding: 8,
+        apply({ availableWidth, elements }) {
+          const nextMaxWidth = Math.max(140, Math.min(280, Math.floor(availableWidth)));
+          elements.floating.style.maxWidth = `${nextMaxWidth}px`;
+        },
+      }),
+    ],
+  })
+    .then(({ x, y }) => {
+      if (menuList.hidden) {
+        return;
+      }
+      menuList.style.position = 'fixed';
+      menuList.style.left = `${Math.round(x)}px`;
+      menuList.style.top = `${Math.round(y)}px`;
+      menuList.style.right = 'auto';
+      menuList.classList.add('is-open');
+    })
+    .catch(() => {
+      // Keep native absolute fallback when floating positioning is unavailable.
+    });
+}
+
+function startBucketMenuAutoUpdate(toggleBtn, menuList) {
+  if (!toggleBtn || !menuList) {
+    return;
+  }
+
+  stopBucketMenuAutoUpdate(menuList);
+  const cleanup = autoUpdate(toggleBtn, menuList, () => {
+    positionBucketActionMenu(toggleBtn, menuList);
+  });
+  _bucketMenuAutoUpdates.set(menuList, cleanup);
+  positionBucketActionMenu(toggleBtn, menuList);
+}
 
 export function initBucketDeps({
   addProjectLane,
@@ -249,6 +319,14 @@ function getTodoGroupLabel(todo) {
   const bucket = getBucketLabel(normalizeBucketIdOrDefault(todo.bucket, 'bucket4'));
   const lane = getProjectLaneName(todo.projectLaneId || '');
   return lane ? `${bucket}/${lane}` : `${bucket}/unassigned`;
+}
+
+function renderTodoItems(listEl, todos) {
+  return _deps.renderTodoItems(listEl, todos);
+}
+
+function sortTodos(list) {
+  return _deps.sortTodos(list);
 }
 
 function getActiveBucketCount() {
@@ -506,167 +584,46 @@ function renderProjectLaneColumns() {
 }
 
 function registerBucketDragControls() {
-  if (!boardEl) {
+  if (!boardEl || typeof window === 'undefined') {
     return;
   }
 
-  let activeColumn = null;
-  let activeHandle = null;
-  let placeholderEl = null;
-  let pointerOffsetX = 0;
-  let pointerOffsetY = 0;
-  let lastPointerX = 0;
-  let lastPointerY = 0;
-  let rafPending = false;
-  let onWindowMove = null;
-  let onWindowEnd = null;
+  if (runtime.bucketSortableInstance?.destroy) {
+    runtime.bucketSortableInstance.destroy();
+    runtime.bucketSortableInstance = null;
+  }
 
-  const updateDrag = () => {
-    rafPending = false;
-
-    if (!activeColumn) {
-      return;
-    }
-
-    activeColumn.style.left = `${Math.round(lastPointerX - pointerOffsetX)}px`;
-    activeColumn.style.top = `${Math.round(lastPointerY - pointerOffsetY)}px`;
-
-    const others = Array.from(
-      boardEl.querySelectorAll('.column[data-bucket], .column[data-project-lane-id], .column-placeholder'),
-    ).filter(
-      (col) => col !== placeholderEl && !col.hidden,
-    );
-    const target = others.find(
-      (col) => lastPointerX < col.getBoundingClientRect().left + col.getBoundingClientRect().width / 2,
-    );
-
-    if (target) {
-      boardEl.insertBefore(placeholderEl, target);
-    } else {
-      boardEl.appendChild(placeholderEl);
-    }
-  };
-
-  const onPointerMove = (event) => {
-    if (!activeColumn) {
-      return;
-    }
-
-    lastPointerX = event.clientX;
-    lastPointerY = event.clientY;
-
-    if (!rafPending) {
-      rafPending = true;
-      window.requestAnimationFrame(updateDrag);
-    }
-  };
-
-  const finishDrag = () => {
-    if (!activeColumn) {
-      return;
-    }
-
-    if (rafPending) {
-      rafPending = false;
-      updateDrag();
-    }
-
-    activeColumn.style.position = '';
-    activeColumn.style.width = '';
-    activeColumn.style.height = '';
-    activeColumn.style.left = '';
-    activeColumn.style.top = '';
-    activeColumn.style.zIndex = '';
-    activeColumn.style.pointerEvents = '';
-    activeColumn.style.margin = '';
-    activeColumn.classList.remove('is-dragging');
-
-    if (placeholderEl && placeholderEl.parentNode) {
-      placeholderEl.parentNode.insertBefore(activeColumn, placeholderEl);
-      placeholderEl.remove();
-    } else {
-      boardEl.appendChild(activeColumn);
-    }
-
-    if (activeHandle) {
-      activeHandle.classList.remove('is-grabbing');
-    }
-
-    if (onWindowMove) {
-      window.removeEventListener('pointermove', onWindowMove);
-    }
-    if (onWindowEnd) {
-      window.removeEventListener('pointerup', onWindowEnd);
-      window.removeEventListener('pointercancel', onWindowEnd);
-    }
-
-    syncBucketOrderFromDom();
-    applyBucketOrder();
-    renderProjectLaneColumns();
-    applyBucketSizes();
-    applyProjectLaneSizes();
-    applyBucketVisibility();
-    _deps.queueSync();
-
-    activeColumn = null;
-    activeHandle = null;
-    placeholderEl = null;
-    pointerOffsetX = 0;
-    pointerOffsetY = 0;
-    lastPointerX = 0;
-    lastPointerY = 0;
-    rafPending = false;
-    onWindowMove = null;
-    onWindowEnd = null;
-  };
-
-  boardEl.addEventListener('pointerdown', (event) => {
-    const handle = event.target.closest('.column-drag-handle');
-    if (!handle) {
-      return;
-    }
-
-    const column = handle.closest('.column[data-bucket], .column[data-project-lane-id]');
-    if (!column || column.hidden) {
-      return;
-    }
-
-    event.preventDefault();
-
-    const rect = column.getBoundingClientRect();
-    activeColumn = column;
-    activeHandle = handle;
-    pointerOffsetX = event.clientX - rect.left;
-    pointerOffsetY = event.clientY - rect.top;
-    lastPointerX = event.clientX;
-    lastPointerY = event.clientY;
-
-    placeholderEl = document.createElement('div');
-    placeholderEl.className = 'column-placeholder';
-    placeholderEl.style.width = `${Math.round(rect.width)}px`;
-    placeholderEl.style.height = `${Math.round(rect.height)}px`;
-    boardEl.insertBefore(placeholderEl, column.nextSibling);
-
-    activeColumn.classList.add('is-dragging');
-    activeHandle.classList.add('is-grabbing');
-    activeColumn.style.position = 'fixed';
-    activeColumn.style.width = `${Math.round(rect.width)}px`;
-    activeColumn.style.height = `${Math.round(rect.height)}px`;
-    activeColumn.style.left = `${Math.round(rect.left)}px`;
-    activeColumn.style.top = `${Math.round(rect.top)}px`;
-    activeColumn.style.zIndex = '30';
-    activeColumn.style.pointerEvents = 'none';
-    activeColumn.style.margin = '0';
-    document.body.appendChild(activeColumn);
-
-    onWindowMove = onPointerMove;
-    onWindowEnd = finishDrag;
-    window.addEventListener('pointermove', onWindowMove);
-    window.addEventListener('pointerup', onWindowEnd);
-    window.addEventListener('pointercancel', onWindowEnd);
+  runtime.bucketSortableInstance = Sortable.create(boardEl, {
+    animation: 160,
+    easing: 'cubic-bezier(0.2, 0, 0, 1)',
+    handle: '.column-drag-handle',
+    draggable: '.column[data-bucket]:not([hidden])',
+    fallbackOnBody: true,
+    forceFallback: true,
+    dragClass: 'is-dragging',
+    chosenClass: 'is-drag-chosen',
+    ghostClass: 'is-drag-ghost',
+    direction() {
+      return window.matchMedia('(max-width: 760px)').matches ? 'vertical' : 'horizontal';
+    },
+    onStart() {
+      closeBucketActionMenus();
+      closeBucketLaneCreateForms();
+    },
+    onEnd(event) {
+      if (!event || event.oldIndex === event.newIndex) {
+        return;
+      }
+      syncBucketOrderFromDom();
+      applyBucketOrder();
+      renderProjectLaneColumns();
+      applyBucketSizes();
+      applyProjectLaneSizes();
+      applyBucketVisibility();
+      _deps.queueSync();
+    },
   });
 }
-
 function registerProjectColumnControls() {
   if (addProjectColumnBtn) {
     addProjectColumnBtn.setAttribute('aria-label', 'Add Bucket');
@@ -718,7 +675,149 @@ function registerProjectColumnControls() {
   }
 }
 
+function setLaneCreateButtonState(addBtn, bucket, isOpen) {
+  if (!addBtn) {
+    return;
+  }
+
+  if (isOpen) {
+    addBtn.classList.add('is-active');
+    addBtn.textContent = 'Cancel';
+    addBtn.setAttribute('aria-expanded', 'true');
+    addBtn.setAttribute('aria-pressed', 'true');
+    addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} Close Subproject form`);
+    return;
+  }
+
+  addBtn.classList.remove('is-active');
+  addBtn.textContent = '+';
+  addBtn.setAttribute('aria-expanded', 'false');
+  addBtn.setAttribute('aria-pressed', 'false');
+  addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} Add Subproject`);
+}
+
+function stopBucketLaneCreateAutoUpdate(laneCreate) {
+  if (!laneCreate) {
+    return;
+  }
+
+  const cleanup = _laneCreateAutoUpdates.get(laneCreate);
+  if (typeof cleanup === 'function') {
+    cleanup();
+  }
+  _laneCreateAutoUpdates.delete(laneCreate);
+  laneCreate.classList.remove('is-open');
+  laneCreate.style.removeProperty('position');
+  laneCreate.style.removeProperty('left');
+  laneCreate.style.removeProperty('top');
+  laneCreate.style.removeProperty('right');
+  laneCreate.style.removeProperty('width');
+}
+
+function positionBucketLaneCreate(addBtn, laneCreate) {
+  if (!addBtn || !laneCreate || laneCreate.classList.contains('hidden')) {
+    return;
+  }
+
+  computePosition(addBtn, laneCreate, {
+    strategy: 'fixed',
+    placement: 'bottom-end',
+    middleware: [
+      offset(8),
+      flip({ padding: 8 }),
+      shift({ padding: 8 }),
+      size({
+        padding: 8,
+        apply({ availableWidth, rects, elements }) {
+          const cappedAvailable = Math.max(180, Math.floor(availableWidth));
+          const preferredWidth = Math.max(220, Math.floor(rects.reference.width + 170));
+          const nextWidth = Math.min(360, Math.min(cappedAvailable, preferredWidth));
+          elements.floating.style.width = `${nextWidth}px`;
+        },
+      }),
+    ],
+  })
+    .then(({ x, y }) => {
+      if (laneCreate.classList.contains('hidden')) {
+        return;
+      }
+      laneCreate.style.position = 'fixed';
+      laneCreate.style.left = `${Math.round(x)}px`;
+      laneCreate.style.top = `${Math.round(y)}px`;
+      laneCreate.style.right = 'auto';
+      laneCreate.classList.add('is-open');
+    })
+    .catch(() => {
+      // Keep inline fallback when floating positioning is unavailable.
+    });
+}
+
+function startBucketLaneCreateAutoUpdate(addBtn, laneCreate) {
+  if (!addBtn || !laneCreate) {
+    return;
+  }
+
+  stopBucketLaneCreateAutoUpdate(laneCreate);
+  const cleanup = autoUpdate(addBtn, laneCreate, () => {
+    positionBucketLaneCreate(addBtn, laneCreate);
+  });
+  _laneCreateAutoUpdates.set(laneCreate, cleanup);
+  positionBucketLaneCreate(addBtn, laneCreate);
+}
+
+function closeBucketLaneCreateForms({ except = null, restoreFocus = false } = {}) {
+  document.querySelectorAll('.bucket-lane-create').forEach((laneCreate) => {
+    if (laneCreate === except) {
+      return;
+    }
+
+    const parentActions = laneCreate.parentElement;
+    const bucket = laneCreate.closest('.column[data-bucket]')?.dataset.bucket || '';
+    const addBtn = parentActions?.querySelector('.bucket-lane-add-btn') || null;
+
+    laneCreate.classList.add('hidden');
+    stopBucketLaneCreateAutoUpdate(laneCreate);
+
+    if (bucket) {
+      setLaneCreateButtonState(addBtn, bucket, false);
+    }
+  });
+
+  if (restoreFocus && runtime.activeLaneCreateButton?.focus) {
+    runtime.activeLaneCreateButton.focus();
+  }
+
+  if (except) {
+    runtime.activeLaneCreateButton = except.parentElement?.querySelector('.bucket-lane-add-btn') || null;
+  } else {
+    runtime.activeLaneCreateButton = null;
+  }
+}
+
+function registerBucketLaneCreateHandlers() {
+  if (runtime.bucketLaneCreateHandlersRegistered || typeof document === 'undefined') {
+    return;
+  }
+
+  runtime.bucketLaneCreateHandlersRegistered = true;
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (target && target.closest('.bucket-lane-create, .bucket-lane-add-btn')) {
+      return;
+    }
+    closeBucketLaneCreateForms();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      closeBucketLaneCreateForms({ restoreFocus: true });
+    }
+  });
+}
+
 function registerBucketLaneControls() {
+  registerBucketLaneCreateHandlers();
+
   document.querySelectorAll('.column[data-bucket]').forEach((column) => {
     const bucket = column.dataset.bucket;
     const actions = column.querySelector('.column-head-actions');
@@ -729,47 +828,51 @@ function registerBucketLaneControls() {
     const addBtn = document.createElement('button');
     addBtn.type = 'button';
     addBtn.className = 'column-remove-btn bucket-lane-add-btn bucket-header-action';
-    addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} Add Subproject`);
-    addBtn.setAttribute('aria-expanded', 'false');
-    addBtn.setAttribute('aria-pressed', 'false');
-    addBtn.textContent = '+';
+    setLaneCreateButtonState(addBtn, bucket, false);
+
     const laneCreate = document.createElement('div');
     laneCreate.className = 'inline-lane-create hidden bucket-lane-create';
+
     const laneNameInput = document.createElement('input');
     laneNameInput.type = 'text';
     laneNameInput.maxLength = '30';
     laneNameInput.placeholder = 'Subproject name';
     laneNameInput.setAttribute('aria-label', `${getBucketLabel(bucket)} Subproject Name`);
+
     const laneCreateBtn = document.createElement('button');
     laneCreateBtn.type = 'button';
     laneCreateBtn.className = 'column-remove-btn lane-create-submit-btn';
     laneCreateBtn.textContent = 'Add';
+
     const laneCancelBtn = document.createElement('button');
     laneCancelBtn.type = 'button';
     laneCancelBtn.className = 'column-remove-btn lane-create-cancel-btn';
     laneCancelBtn.textContent = 'Cancel';
     laneCancelBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} Cancel subproject creation`);
+
     laneCreate.append(laneNameInput, laneCreateBtn, laneCancelBtn);
 
     const showLaneCreate = () => {
+      closeBucketLaneCreateForms();
+      closeBucketActionMenus();
       laneCreate.classList.remove('hidden');
-      addBtn.classList.add('is-active');
-      addBtn.textContent = 'Cancel';
-      addBtn.setAttribute('aria-expanded', 'true');
-      addBtn.setAttribute('aria-pressed', 'true');
-      addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} Close Subproject form`);
+      setLaneCreateButtonState(addBtn, bucket, true);
+      startBucketLaneCreateAutoUpdate(addBtn, laneCreate);
+      runtime.activeLaneCreateButton = addBtn;
       laneNameInput.value = '';
       laneNameInput.focus();
     };
+
     const hideLaneCreate = () => {
       laneCreate.classList.add('hidden');
-      addBtn.classList.remove('is-active');
-      addBtn.textContent = '+';
-      addBtn.setAttribute('aria-expanded', 'false');
-      addBtn.setAttribute('aria-pressed', 'false');
-      addBtn.setAttribute('aria-label', `${getBucketLabel(bucket)} Add Subproject`);
+      stopBucketLaneCreateAutoUpdate(laneCreate);
+      setLaneCreateButtonState(addBtn, bucket, false);
       laneNameInput.value = '';
+      if (runtime.activeLaneCreateButton === addBtn) {
+        runtime.activeLaneCreateButton = null;
+      }
     };
+
     const submitLaneCreate = () => {
       if (!addProjectLane(laneNameInput.value, bucket)) {
         _deps.showToast('Failed to add project lane: empty or too long name', 'error');
@@ -778,8 +881,12 @@ function registerBucketLaneControls() {
       }
       _deps.showToast(`${getBucketLabel(bucket)} subproject added`, 'success');
       hideLaneCreate();
-      _deps.render();
       _deps.queueSync();
+      try {
+        _deps.render();
+      } catch (err) {
+        console.error('[bucket] render failed after lane create:', err);
+      }
     };
 
     addBtn.addEventListener('click', () => {
@@ -789,6 +896,7 @@ function registerBucketLaneControls() {
         hideLaneCreate();
       }
     });
+
     laneCreateBtn.addEventListener('click', submitLaneCreate);
     laneCancelBtn.addEventListener('click', hideLaneCreate);
     laneNameInput.addEventListener('keydown', (event) => {
@@ -800,14 +908,15 @@ function registerBucketLaneControls() {
         hideLaneCreate();
       }
     });
+
     actions.insertBefore(laneCreate, actions.firstChild);
     actions.insertBefore(addBtn, actions.firstChild);
   });
 }
-
 function closeBucketActionMenus({ restoreFocus = false } = {}) {
   document.querySelectorAll('.bucket-action-menu-list').forEach((menuList) => {
     menuList.hidden = true;
+    stopBucketMenuAutoUpdate(menuList);
   });
   document.querySelectorAll('.bucket-action-menu-toggle').forEach((toggleBtn) => {
     toggleBtn.setAttribute('aria-expanded', 'false');
@@ -881,11 +990,13 @@ function ensureBucketActionMenu(column) {
       event.stopPropagation();
       const willOpen = toggleBtn.getAttribute('aria-expanded') !== 'true';
       closeBucketActionMenus();
+      closeBucketLaneCreateForms();
       if (!willOpen) {
         return;
       }
       toggleBtn.setAttribute('aria-expanded', 'true');
       menuList.hidden = false;
+      startBucketMenuAutoUpdate(toggleBtn, menuList);
       runtime.activeBucketMenuButton = toggleBtn;
       const firstItem = menuList.querySelector('button:not([disabled])');
       firstItem?.focus?.();
@@ -936,6 +1047,11 @@ function ensureBucketActionMenu(column) {
   menu.hidden = menuList.children.length === 0;
   if (menu.hidden) {
     closeBucketActionMenus();
+    return;
+  }
+
+  if (toggleBtn.getAttribute('aria-expanded') === 'true' && !menuList.hidden) {
+    startBucketMenuAutoUpdate(toggleBtn, menuList);
   }
 }
 
@@ -1227,3 +1343,4 @@ export {
   bucketModel,
   bucketApi,
 };
+

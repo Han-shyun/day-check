@@ -12,6 +12,7 @@ export const addProjectColumnBtn = document.getElementById('addProjectColumnBtn'
 export const removeProjectColumnBtn = document.getElementById('removeProjectColumnBtn');
 
 export const authStatusEl = document.getElementById('authStatus');
+export const syncStatusBadgeEl = document.getElementById('syncStatusBadge');
 export const authBtn = document.getElementById('authBtn');
 export const appHeaderEl = document.getElementById('appHeader');
 
@@ -20,6 +21,12 @@ export const weeklyDoneCountEl = document.getElementById('weeklyDoneCount');
 export const weeklyDoneListEl = document.getElementById('weeklyDoneList');
 export const weeklyPendingCountEl = document.getElementById('weeklyPendingCount');
 export const weeklyPendingListEl = document.getElementById('weeklyPendingList');
+export const reportKpiRateEl = document.getElementById('reportKpiRate');
+export const reportKpiDoneEl = document.getElementById('reportKpiDone');
+export const reportKpiPendingEl = document.getElementById('reportKpiPending');
+export const reportKpiWowEl = document.getElementById('reportKpiWow');
+export const reportDonutChartEl = document.getElementById('reportDonutChart');
+export const reportBarChartEl = document.getElementById('reportBarChart');
 export const quickForm = document.getElementById('quickAddForm');
 export const quickAddBody = document.getElementById('quickAddBody');
 export const quickAddOptionsToggleBtn = document.getElementById('quickAddOptionsToggle');
@@ -44,6 +51,7 @@ export const nextMonthBtn = document.getElementById('nextMonthBtn');
 
 export const selectedDateLabel = document.getElementById('selectedDateLabel');
 export const selectedDateSummary = document.getElementById('selectedDateSummary');
+export const selectedDueList = document.getElementById('selectedDueList');
 export const selectedCreatedList = document.getElementById('selectedCreatedList');
 export const selectedCompletedList = document.getElementById('selectedCompletedList');
 export const selectedCalendarNoteList = document.getElementById('selectedCalendarNoteList');

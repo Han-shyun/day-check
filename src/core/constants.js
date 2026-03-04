@@ -18,6 +18,7 @@ export const HOLIDAY_CACHE_TTL_MS_DEFAULT = 24 * 60 * 60 * 1000;
 export const HOLIDAY_STALE_RETRY_MS = 5 * 60 * 1000;
 export const API_ERROR_TOAST_COOLDOWN_MS = 4000;
 export const CONFLICT_BACKUP_STORAGE_KEY = 'day-check.state.conflict.backup.v1';
+export const QUICK_ADD_PREFS_STORAGE_KEY = 'day-check.quickAddPrefs.v1';
 
 export const BUCKET_TOTAL = 8;
 

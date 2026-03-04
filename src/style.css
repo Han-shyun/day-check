@@ -188,7 +188,13 @@ textarea:focus {
   background: var(--card);
   backdrop-filter: none;
   box-shadow: var(--shadow-sm);
-  overflow: clip;
+  overflow: hidden;
+}
+
+@supports (overflow: clip) {
+  .card {
+    overflow: clip;
+  }
 }
 
 .app-tabs {
@@ -487,7 +493,6 @@ button.is-active,
   padding: 0 11px;
 }
 
-.lane-create-cancel-btn,
 .bucket-lane-add-btn,
 .bucket-remove-btn {
   width: 34px;
@@ -687,6 +692,33 @@ button.is-active,
   gap: 7px;
   margin-top: 4px;
   padding-top: 4px;
+}
+
+.todo-detail-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.todo-detail-summary-item {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+}
+
+.todo-detail-input {
+  width: 100%;
+  min-height: 54px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg-soft);
+  color: var(--text);
+  padding: 8px;
+  resize: vertical;
 }
 
 .todo-memo-add,
@@ -978,9 +1010,11 @@ button.is-active,
 
 .board {
   display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(var(--board-rows), minmax(0, 1fr));
-  grid-auto-columns: minmax(0, 1fr);
+  grid-auto-flow: row;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: none;
+  grid-auto-columns: auto;
+  grid-auto-rows: auto;
   gap: 12px;
   align-items: start;
 }
@@ -1006,6 +1040,15 @@ button.is-active,
   opacity: 0.86;
   z-index: 3;
   box-shadow: var(--shadow-lg);
+}
+
+.column.is-drag-chosen {
+  opacity: 0.92;
+}
+
+.column.is-drag-ghost {
+  opacity: 0.42;
+  border-style: dashed;
 }
 
 .column-placeholder {
@@ -1383,13 +1426,167 @@ button.is-active,
 }
 
 .calendar-detail-grid,
+.report-kpi {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.kpi-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 12px 8px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text-heading);
+  letter-spacing: -0.02em;
+}
+
+.kpi-value[data-trend='up'] {
+  color: var(--success);
+}
+
+.kpi-value[data-trend='down'] {
+  color: var(--danger);
+}
+
+.kpi-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.report-charts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: start;
+  margin-bottom: 14px;
+}
+
+.report-chart-section {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  background: var(--card);
+}
+
+.report-chart-section > h3 {
+  margin: 0 0 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.donut-chart-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.donut-svg {
+  width: 96px;
+  height: 96px;
+  display: block;
+}
+
+.donut-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.donut-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.donut-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.bar-chart-wrap {
+  min-height: 96px;
+}
+
+.bar-chart {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  height: 120px;
+}
+
+.bar-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.bar-wrap {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-height: 60px;
+}
+
+.bar {
+  width: 100%;
+  height: var(--bar-h, 4px);
+  min-height: 4px;
+  background: var(--accent);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  transition: height 0.25s ease;
+}
+
+.bar-label {
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.bar-count {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-height: 1em;
+}
+
 .report-grid {
   display: grid;
   gap: 11px;
 }
 
 .calendar-detail-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
 .calendar-detail-grid article,
@@ -2251,6 +2448,14 @@ button.is-active,
     padding: 9px;
   }
 
+  .report-kpi {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .report-charts {
+    grid-template-columns: 1fr;
+  }
+
   .report-list li {
     border-radius: 9px;
     padding: 8px;
@@ -2328,7 +2533,7 @@ button.is-active,
   }
 
   .board-wrap {
-    overflow-x: clip;
+    overflow-x: hidden;
   }
 
   .board {
@@ -2369,7 +2574,7 @@ button.is-active,
 
 body.is-ios-portrait .board-wrap,
 body.is-mobile-portrait .board-wrap {
-  overflow-x: clip;
+  overflow-x: hidden;
 }
 
 body.is-ios-portrait .board,
@@ -2956,3 +3161,593 @@ button.is-active,
   }
 }
 
+/* UX refresh: sync status, quick-add progressive options, Kakao button spec */
+
+#syncStatusBadge {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid #d9e0ea;
+  background: #f5f7fb;
+  color: #4b5667;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+#syncStatusBadge[data-sync-status='local'],
+#syncStatusBadge[data-sync-status='saved'] {
+  border-color: #d5e8da;
+  background: #edf9ef;
+  color: #1f6e35;
+}
+
+#syncStatusBadge[data-sync-status='pending'],
+#syncStatusBadge[data-sync-status='saving'] {
+  border-color: #f2d899;
+  background: #fff7e6;
+  color: #8e5c00;
+}
+
+#syncStatusBadge[data-sync-status='conflict'],
+#syncStatusBadge[data-sync-status='error'] {
+  border-color: #f1b7b7;
+  background: #fff0f0;
+  color: #b42318;
+}
+
+.kakao-btn {
+  min-height: 44px;
+  padding: 9px 12px;
+  gap: 8px;
+  border: 1px solid #e6cd00;
+  background: #fee500;
+  color: #191919;
+  font-weight: 700;
+}
+
+.kakao-btn:hover {
+  border-color: #d8bd00;
+  background: #f5dc00;
+}
+
+.kakao-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  background: #191919;
+  color: #fee500;
+}
+
+#quickAddForm {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.quick-add-primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.quick-add-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.quick-add-options.hidden {
+  display: none;
+}
+
+.quick-add-options-toggle {
+  min-width: 68px;
+}
+
+@media (max-width: 860px) {
+  .quick-add-primary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .quick-add-primary > button[type='submit'] {
+    grid-column: 1 / -1;
+  }
+
+  .quick-add-options {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* UI resilience hardening: long text and larger font scaling */
+
+.route-view,
+.card,
+.board,
+.column,
+.column-head,
+.column-head-actions,
+.board-toolbar,
+.board-toolbar-actions,
+.quick-add-primary,
+.quick-add-options,
+.todo-item,
+.todo-main,
+.todo-controls,
+.project-lane-head,
+.auth-area {
+  min-width: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  max-width: 100%;
+}
+
+button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: keep-all;
+  line-height: 1.25;
+}
+
+#quickAddForm input,
+#quickAddForm select,
+#quickAddForm button,
+.quick-add-primary > *,
+.quick-add-options > * {
+  min-width: 0;
+}
+
+.quick-add-options {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.column-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+
+.bucket-title {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.column-head-actions {
+  min-width: 0;
+  justify-self: end;
+  align-items: flex-start;
+}
+
+.column-head-actions .inline-lane-create {
+  width: 100%;
+}
+
+.column-head-actions .inline-lane-create.is-open {
+  width: auto;
+}
+
+.column-head-actions button,
+.board-toolbar-actions button,
+.bucket-action-menu-item {
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.bucket-action-menu-list {
+  max-width: min(280px, calc(100vw - 32px));
+}
+
+.project-lane-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-lane-head strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1024px) {
+  .column-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .column-head-actions {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 620px) {
+  .quick-add-primary {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-add-primary > button,
+  .quick-add-options > * {
+    width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .board-wrap {
+    overflow-x: hidden;
+  }
+
+  .board {
+    width: 100%;
+    grid-template-columns: 1fr !important;
+    grid-auto-flow: row !important;
+    grid-template-rows: none !important;
+    grid-auto-columns: 100% !important;
+    grid-auto-rows: auto !important;
+    overflow-x: hidden;
+  }
+
+  .column {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+}
+
+/* Glow Seoul-inspired mono skin */
+
+:root {
+  --bg: #ededed;
+  --bg-soft: #f5f5f5;
+  --card: #ffffff;
+  --line: #111111;
+  --line-strong: #000000;
+  --text: #111111;
+  --text-secondary: #5a5a5a;
+  --text-heading: #050505;
+  --muted: #6a6a6a;
+  --accent: #111111;
+  --accent-strong: #000000;
+  --accent-soft: #f2f2f2;
+  --accent-hover: #e7e7e7;
+  --success: #111111;
+  --success-soft: #f4f4f4;
+  --danger: #111111;
+  --danger-soft: #f4f4f4;
+  --focus-ring: 0 0 0 2px rgba(17, 17, 17, 0.18);
+}
+
+body {
+  font-family: 'NanumSquareNeo', 'Apple SD Gothic Neo', 'AppleSDGothicNeo', 'Pretendard', 'Noto Sans KR', sans-serif;
+  background:
+    radial-gradient(1300px 680px at 50% -240px, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0) 70%),
+    linear-gradient(180deg, #f3f3f3 0%, #ebebeb 100%);
+  color: var(--text);
+}
+
+.app-shell {
+  max-width: 1480px;
+}
+
+.card {
+  border: 1.5px solid var(--line);
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.topbar,
+.quick-add,
+.todo-list-panel,
+.board-wrap,
+.calendar,
+.report {
+  padding: clamp(14px, 2.2vw, 22px);
+}
+
+.eyebrow {
+  color: #1c55aa;
+  letter-spacing: 0.18em;
+}
+
+h1 {
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+h2,
+h3,
+h4 {
+  font-weight: 800;
+  color: var(--text-heading);
+}
+
+.today-date-chip,
+#authStatus,
+.user-alias-preview,
+#syncStatusBadge {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+}
+
+.app-tabs {
+  border: 1.5px solid var(--line);
+  background: #fff;
+}
+
+.app-tab {
+  text-transform: uppercase;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #444;
+}
+
+.app-tab:hover {
+  background: #f0f0f0;
+  color: #111;
+}
+
+.app-tab.is-active,
+.app-tab[aria-current='page'] {
+  border-color: #111;
+  background: #111;
+  color: #fff;
+}
+
+.auth-area {
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+button {
+  border: 1.5px solid #111;
+  background: #fff;
+  color: #111;
+  font-weight: 800;
+  border-radius: 10px;
+  min-height: 42px;
+}
+
+button:hover {
+  border-color: #111;
+  background: #111;
+  color: #fff;
+  box-shadow: none;
+  transform: none;
+}
+
+#quickAddForm button,
+#calendarSubmitBtn,
+#addSelectedDateNoteBtn,
+.complete,
+.delete {
+  border-color: #111;
+  background: #111;
+  color: #fff;
+}
+
+#quickAddForm button:hover,
+#calendarSubmitBtn:hover,
+#addSelectedDateNoteBtn:hover,
+.complete:hover,
+.delete:hover {
+  background: #2a2a2a;
+  border-color: #111;
+}
+
+.kakao-btn {
+  border: 1px solid #e6cd00;
+  background: #fee500;
+  color: #191919;
+}
+
+.kakao-btn:hover {
+  border-color: #d8bd00;
+  background: #f5dc00;
+  color: #191919;
+}
+
+.count {
+  border: 1px solid #111;
+  background: #fff;
+  color: #111;
+}
+
+.quick-add-hint,
+.muted,
+.meta,
+.board-toolbar-title,
+#calendarMonthLabel {
+  color: #5a5a5a;
+}
+
+.board {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.column {
+  border: 1.5px solid #111;
+  background: #fff;
+}
+
+.column-head {
+  border-bottom: 1px solid #111;
+  padding-bottom: 10px;
+  margin-bottom: 12px;
+}
+
+.column-drag-handle,
+.bucket-action-menu-toggle,
+.bucket-action-menu-item,
+.project-add-btn,
+.column-remove-btn,
+.bucket-lane-add-btn,
+.bucket-remove-btn {
+  border-color: #111;
+  background: #fff;
+  color: #111;
+}
+
+.column-drag-handle:hover,
+.bucket-action-menu-toggle:hover,
+.bucket-action-menu-item:hover,
+.project-add-btn:hover,
+.column-remove-btn:hover,
+.bucket-lane-add-btn:hover,
+.bucket-remove-btn:hover {
+  background: #111;
+  color: #fff;
+}
+
+.bucket-title {
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.project-lane-group,
+.calendar-detail-grid article,
+.report-grid article,
+.collab-grid article,
+.collab-list-item,
+.shared-todo-item,
+.shared-comment-item,
+.todo-item {
+  border: 1.5px solid #111;
+  background: #fff;
+}
+
+.calendar-cell {
+  border: 1.5px solid #111;
+}
+
+.calendar-cell.is-selected,
+.calendar-cell[aria-selected='true'] {
+  background: #f1f1f1;
+}
+
+.selected-note-item {
+  border: 1px solid #111;
+}
+
+@media (max-width: 980px) {
+  .board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.bucket-lane-create {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.bucket-lane-create.is-open {
+  z-index: 52;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  box-shadow: var(--shadow-lg);
+}
+
+.bucket-lane-create > input {
+  min-height: 34px;
+}
+
+.lane-create-submit-btn,
+.lane-create-cancel-btn {
+  min-width: 72px;
+  width: auto;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+@media (max-width: 620px) {
+  .bucket-lane-create {
+    grid-template-columns: 1fr;
+  }
+
+  .lane-create-submit-btn,
+  .lane-create-cancel-btn {
+    width: 100%;
+  }
+}
+
+/* Section 15 adoption: tokenized layout foundation */
+
+:root {
+  --layout-content-max-ch: 68ch;
+  --type-scale-xs: clamp(12px, 0.85vw, 13px);
+  --type-scale-sm: clamp(13px, 0.95vw, 14px);
+  --type-scale-md: clamp(14px, 1.08vw, 16px);
+  --type-scale-lg: clamp(18px, 1.6vw, 24px);
+  --grid-board-cols-desktop: 4;
+  --grid-board-cols-tablet: 2;
+  --grid-board-cols-mobile: 1;
+  --grid-calendar-cols: 7;
+}
+
+.hero-copy,
+.quick-add-hint {
+  max-width: var(--layout-content-max-ch);
+}
+
+.app-tab {
+  font-size: var(--type-scale-sm);
+}
+
+.title {
+  font-size: var(--type-scale-md);
+}
+
+h2 {
+  font-size: var(--type-scale-lg);
+}
+
+.board {
+  grid-template-columns: repeat(var(--grid-board-cols-desktop), minmax(0, 1fr));
+  gap: clamp(10px, 1.2vw, 16px);
+}
+
+.calendar-weekdays,
+.calendar-grid {
+  grid-template-columns: repeat(var(--grid-calendar-cols), minmax(0, 1fr));
+}
+
+.calendar-cell {
+  min-height: clamp(92px, 13vw, 148px);
+}
+
+@media (max-width: 980px) {
+  .board {
+    grid-template-columns: repeat(var(--grid-board-cols-tablet), minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .board {
+    grid-template-columns: repeat(var(--grid-board-cols-mobile), minmax(0, 1fr)) !important;
+  }
+}
+
+@media (max-width: 680px) {
+  .calendar-cell {
+    min-height: clamp(82px, 22vw, 116px);
+  }
+}

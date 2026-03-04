@@ -1,3 +1,13 @@
+// =============================================================================
+// ⚠️  AI CODING RULES — READ BEFORE EDITING (Claude / ChatGPT / Copilot)
+// =============================================================================
+// 1. 한글 주석·문자열을 절대 수정하지 말 것. 코드 로직만 변경할 것.
+// 2. 파일 저장: UTF-8 (BOM 없음), LF 줄바꿈 필수
+// 3. 이 파일은 부트스트랩 엔트리. 새 비즈니스 로직은 src/features/ 또는 src/core/ 에 추가.
+// 4. 수정 후 반드시: npm run check:text && npm run test:run
+// 5. 전체 규칙: CLAUDE.md 참고
+// =============================================================================
+
 import { createApiRequestError as createCoreApiRequestError } from './core/api-request.js';
 import {
   API_BASE,
@@ -8,6 +18,7 @@ import {
   STATE_POLL_ACTIVE_INTERVAL_MS_DEFAULT,
   STATE_POLL_HIDDEN_INTERVAL_MS_DEFAULT,
   SYNC_DEBOUNCE_MS,
+  QUICK_ADD_PREFS_STORAGE_KEY,
   defaultBucketLabels,
   defaultBucketVisibility,
   buckets,
@@ -99,12 +110,13 @@ import {
   hasPendingLocalChanges,
   markStateDirty,
 } from './state/index.js';
+import { applyI18n, t } from './core/i18n.js';
 
 /* ── Local helpers ── */
 
 function formatToday() {
   const now = new Date();
-  const fmt = new Intl.DateTimeFormat('en-US', {
+  const fmt = new Intl.DateTimeFormat('ko-KR', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -122,7 +134,36 @@ function syncState() {
 }
 
 function render() {
-  renderRouteModule(runtime.currentRoute || 'home');
+  if (runtime.fatalErrorShown) {
+    return;
+  }
+
+  try {
+    bucketModule.ensureBucketColumns();
+    bucketModule.ensureBucketSelectOptions();
+    bucketModule.applyBucketOrder();
+    bucketModule.renderProjectLaneColumns();
+    bucketModule.applyBucketSizes();
+    bucketModule.applyProjectLaneSizes();
+    bucketModule.applyBucketVisibility();
+    bucketModule.applyBucketLabels();
+
+    renderRouteModule(runtime.currentRoute || 'home');
+    collab.renderCollabPanel();
+
+    const activeModule = runtime.routeModules?.[runtime.currentRoute];
+    if (activeModule?.render) {
+      activeModule.render(state);
+    }
+    if (runtime.authView?.render) {
+      runtime.authView.render({
+        isServerSync: runtime.isServerSync,
+        authUser: runtime.authUser,
+      });
+    }
+  } catch (error) {
+    handleFatalError(error);
+  }
 }
 
 function queueSync(immediate = false) {
@@ -156,7 +197,7 @@ function registerEvents() {
         if (shouldHide) {
           quickAddOptionsEl.classList.add('hidden');
           quickAddOptionsToggleBtn.setAttribute('aria-expanded', 'false');
-          quickAddOptionsToggleBtn.textContent = 'Options';
+          quickAddOptionsToggleBtn.textContent = t('quickAdd.optionsOpen');
           return;
         }
 
@@ -164,9 +205,31 @@ function registerEvents() {
           quickAddOptionsEl.classList.remove('hidden');
         }
         quickAddOptionsToggleBtn.setAttribute('aria-expanded', 'true');
-        quickAddOptionsToggleBtn.textContent = 'Collapse';
+        quickAddOptionsToggleBtn.textContent = t('quickAdd.optionsClose');
       });
     }
+
+    const restoreQuickAddBucket = () => {
+      if (!bucketSelect) {
+        return;
+      }
+      try {
+        const prefs = JSON.parse(localStorage.getItem(QUICK_ADD_PREFS_STORAGE_KEY) || '{}');
+        const last = prefs.lastBucket;
+        if (last && bucketSelect.querySelector(`option[value="${last}"]:not([disabled])`)) {
+          bucketSelect.value = last;
+          return;
+        }
+      } catch {
+        // ignore parse errors
+      }
+      const firstEnabled = bucketSelect.querySelector('option:not([disabled])');
+      if (firstEnabled) {
+        bucketSelect.value = firstEnabled.value;
+      }
+    };
+
+    restoreQuickAddBucket();
 
     quickForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -175,10 +238,17 @@ function registerEvents() {
         return;
       }
 
+      const chosenBucket = bucketSelect?.value || 'bucket4';
+      try {
+        localStorage.setItem(QUICK_ADD_PREFS_STORAGE_KEY, JSON.stringify({ lastBucket: chosenBucket }));
+      } catch {
+        // ignore storage errors
+      }
+
       state.todos.unshift(
         createTodo({
           title,
-          bucket: bucketSelect?.value || 'bucket4',
+          bucket: chosenBucket,
           projectLaneId: '',
           priority: Number(prioritySelect?.value || 2),
           dueDate: dueDateInput?.value || '',
@@ -194,15 +264,13 @@ function registerEvents() {
       if (prioritySelect) {
         prioritySelect.value = '2';
       }
-      if (bucketSelect) {
-        bucketSelect.value = 'bucket4';
-      }
+      restoreQuickAddBucket();
       if (quickAddOptionsEl) {
         quickAddOptionsEl.classList.add('hidden');
       }
       if (quickAddOptionsToggleBtn) {
         quickAddOptionsToggleBtn.setAttribute('aria-expanded', 'false');
-        quickAddOptionsToggleBtn.textContent = 'Options';
+        quickAddOptionsToggleBtn.textContent = t('quickAdd.optionsOpen');
       }
       quickInput?.focus();
     });
@@ -243,7 +311,7 @@ function registerEvents() {
       event.preventDefault();
       const date = String(calendarDateInput?.value || '').trim();
       if (!date) {
-        showToast('Please select a date.', 'error');
+        showToast(t('calendar.selectDateRequired'), 'error');
         if (calendarDateInput) {
           calendarDateInput.focus();
         }
@@ -257,7 +325,7 @@ function registerEvents() {
 
       if (itemType === 'todo') {
         if (!todoTitle) {
-          showToast('Please enter a task title.', 'error');
+          showToast(t('calendar.todoTitleRequired'), 'error');
           if (calendarTodoTitleInput) {
             calendarTodoTitleInput.focus();
           }
@@ -275,7 +343,7 @@ function registerEvents() {
         );
       } else {
         if (!noteText) {
-          showToast('Please enter a note.', 'error');
+          showToast(t('calendar.noteRequired'), 'error');
           if (calendarTextInput) {
             calendarTextInput.focus();
           }
@@ -421,7 +489,7 @@ function registerEvents() {
       await collab.refreshCollabSummary({ includeTodos: true });
       collab.updateAuthUI();
       hideProfileEditor();
-      showToast('Profile saved.', 'success');
+      showToast(t('auth.profileSaved'), 'success');
     });
 
     cancelProfileBtn.addEventListener('click', () => {
@@ -482,12 +550,12 @@ function registerEvents() {
   }
 
   if (collabInviteFormEl) {
-    collabInviteFormEl.addEventListener('submit', (event) => {
-      event.preventDefault();
-      collab.submitCollabInvite().catch(() => {
-        showToast('Failed to process invite request.', 'error');
+      collabInviteFormEl.addEventListener('submit', (event) => {
+        event.preventDefault();
+        collab.submitCollabInvite().catch(() => {
+        showToast(t('toast.inviteRequestFailed'), 'error');
+        });
       });
-    });
   }
 
   if (collabPanelEl) {
@@ -497,7 +565,7 @@ function registerEvents() {
         return;
       }
       collab.handleCollabPanelAction(button).catch(() => {
-        showToast('Failed to process sharing request.', 'error');
+        showToast(t('toast.sharingRequestFailed'), 'error');
       });
     });
   }
@@ -536,7 +604,7 @@ function registerEvents() {
       }
       event.preventDefault();
       collab.submitSharedComposeForm(form).catch(() => {
-        showToast('Failed to add shared task.', 'error');
+        showToast(t('toast.sharedTaskAddFailed'), 'error');
       });
     });
 
@@ -552,7 +620,7 @@ function registerEvents() {
       if (action === 'toggle-share-setting') {
         const bucket = button.dataset.bucket;
         collab.toggleBucketShareSetting(bucket).catch(() => {
-          showToast('Failed to change bucket sharing settings.', 'error');
+          showToast(t('toast.sharedSettingFailed'), 'error');
         });
         return;
       }
@@ -563,25 +631,25 @@ function registerEvents() {
 
       if (action === 'save' || action === 'toggle-done') {
         collab.updateSharedTodoFromItem(itemEl, action).catch(() => {
-          showToast('Failed to update shared task.', 'error');
+          showToast(t('toast.sharedTaskUpdateFailed'), 'error');
         });
         return;
       }
       if (action === 'delete') {
         collab.deleteSharedTodo(itemEl.dataset.todoId).catch(() => {
-          showToast('Failed to delete shared task.', 'error');
+          showToast(t('toast.sharedTaskDeleteFailed'), 'error');
         });
         return;
       }
       if (action === 'toggle-comments') {
         collab.toggleSharedCommentPanel(itemEl).catch(() => {
-          showToast('Could not open comment panel.', 'error');
+          showToast(t('toast.commentPanelOpenFailed'), 'error');
         });
         return;
       }
       if (action === 'add-comment') {
         collab.addSharedComment(itemEl).catch(() => {
-          showToast('Failed to add comment.', 'error');
+          showToast(t('toast.commentAddFailed'), 'error');
         });
         return;
       }
@@ -592,7 +660,7 @@ function registerEvents() {
           return;
         }
         collab.deleteSharedComment(commentId, todoId).catch(() => {
-          showToast('Failed to delete comment.', 'error');
+          showToast(t('toast.commentDeleteFailed'), 'error');
         });
       }
     });
@@ -648,6 +716,7 @@ function registerServiceWorker() {
 /* ── Bootstrap ── */
 
 async function bootstrap() {
+  applyI18n();
   registerGlobalErrorBoundary();
   formatToday();
   registerViewportClassSyncModule();
@@ -663,6 +732,7 @@ async function bootstrap() {
     addEmptyMessage: calendarModule.addEmptyMessage,
     sortTodos: todoModule.sortTodos,
     getTodoGroupLabel: bucketModule.getTodoGroupLabel,
+    getBucketLabel: bucketModule.getBucketLabel,
     queueSync: collab.queueSync,
   });
   initRouterDeps({
@@ -786,6 +856,7 @@ async function bootstrap() {
     sortTodos: todoModule.sortTodos,
     render,
     getProjectLaneName: bucketModule.getProjectLaneName,
+    getBucketLabel: bucketModule.getBucketLabel,
     syncBucketActionMenus: bucketModule.syncBucketActionMenus,
     queueSync: collab.queueSync,
     showToast,
@@ -839,7 +910,7 @@ async function bootstrap() {
   const searchParams = new URLSearchParams(window.location.search);
   const auth = searchParams.get('auth');
   if (auth === 'error') {
-    alert('An error occurred during Kakao login.');
+    alert(t('toast.kakaoLoginError'));
   }
 }
 
@@ -862,7 +933,7 @@ bootstrap().catch((error) => {
     collab.updateAuthUI();
     render();
 
-    showToast('Some errors occurred during initialization, but the app has recovered.', 'error');
+    showToast(t('toast.bootstrapRecovered'), 'error');
   } catch (fallbackError) {
     handleFatalError(fallbackError);
   }

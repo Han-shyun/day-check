@@ -1,20 +1,21 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#f5f5f7" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="day-check" />
     <meta name="app-name" content="day-check" />
-    <title>Day Check</title>
+    <title>DAY CHECK</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/eunchurn/NanumSquareNeo@0.0.6/nanumsquareneo.css"
+    />
     <link rel="stylesheet" href="/src/style.css?v=day-check-spa-20260221a" />
   </head>
   <body>
@@ -23,79 +24,119 @@
         <div>
           <p class="eyebrow">DAY-CHECK</p>
           <h1>DAY CHECK</h1>
-          <p class="hero-copy">Organize your daily tasks and long-term schedules.</p>
+          <p class="hero-copy" data-i18n="app.heroCopy">Organize your daily tasks and long-term schedules.</p>
           <p id="todayDate" class="muted today-date-chip"></p>
         </div>
         <div class="auth-area">
-          <p id="authStatus" class="muted">Local Mode</p>
+          <p id="authStatus" class="muted" data-i18n="auth.localMode">Local mode</p>
+          <p id="syncStatusBadge" class="muted sync-status-badge" data-sync-status="local" data-i18n="sync.local">
+            Local saved
+          </p>
           <button id="authBtn" class="kakao-btn" type="button">
             <span class="kakao-logo" aria-hidden="true">K</span>
-            <span>Kakao Login</span>
+            <span data-i18n="auth.kakaoLogin">Kakao Login</span>
           </button>
-          <p id="userAliasPreview" class="muted user-alias-preview">No alias set</p>
+          <p id="userAliasPreview" class="muted user-alias-preview" data-i18n="auth.noAlias">No alias set</p>
           <button
             id="toggleProfileEditorBtn"
             type="button"
             class="ghost-btn"
             aria-expanded="false"
             aria-controls="profileEditor"
+            data-i18n="auth.profile"
           >
             Profile
           </button>
           <div id="profileEditor" class="inline-lane-create hidden profile-editor">
-            <input id="profileNicknameInput" type="text" maxlength="20" placeholder="Nickname" />
-            <input id="profileHonorificInput" type="text" maxlength="12" placeholder="Honorific" />
+            <input
+              id="profileNicknameInput"
+              type="text"
+              maxlength="20"
+              placeholder="Nickname"
+              data-i18n-placeholder="auth.nicknamePlaceholder"
+            />
+            <input
+              id="profileHonorificInput"
+              type="text"
+              maxlength="12"
+              placeholder="Honorific"
+              data-i18n-placeholder="auth.honorificPlaceholder"
+            />
             <input
               id="profilePublicIdInput"
               type="text"
               maxlength="20"
               placeholder="Public ID (e.g. team_alpha)"
+              data-i18n-placeholder="auth.publicIdPlaceholder"
               autocomplete="off"
             />
-            <p id="profilePublicIdHint" class="muted profile-publicid-hint">Login required to set public ID.</p>
-            <button id="saveProfileBtn" type="button">Save</button>
-            <button id="cancelProfileBtn" type="button">Cancel</button>
+            <p id="profilePublicIdHint" class="muted profile-publicid-hint" data-i18n="auth.publicIdHintLoginRequired">
+              Login required to set public ID.
+            </p>
+            <button id="saveProfileBtn" type="button" data-i18n="auth.save">Save</button>
+            <button id="cancelProfileBtn" type="button" data-i18n="auth.cancel">Cancel</button>
           </div>
         </div>
       </header>
 
       <nav class="app-tabs card" aria-label="Main navigation">
-        <a href="#/home" class="app-tab is-active" data-route-link="home" aria-current="page">Home</a>
-        <a href="#/buckets" class="app-tab" data-route-link="buckets">Buckets</a>
-        <a href="#/calendar" class="app-tab" data-route-link="calendar">Calendar</a>
-        <a href="#/report" class="app-tab" data-route-link="report">Report</a>
+        <a href="#/home" class="app-tab is-active" data-route-link="home" aria-current="page" data-i18n="nav.home">Home</a>
+        <a href="#/buckets" class="app-tab" data-route-link="buckets" data-i18n="nav.buckets">Buckets</a>
+        <a href="#/calendar" class="app-tab" data-route-link="calendar" data-i18n="nav.calendar">Calendar</a>
+        <a href="#/report" class="app-tab" data-route-link="report" data-i18n="nav.report">Report</a>
       </nav>
 
       <section id="routeOutlet" class="route-outlet" aria-live="polite" data-route="home">
         <section class="route-view is-active" data-route-view="home">
           <section class="quick-add card" aria-label="Quick add">
             <div class="quick-add-head panel-head">
-              <h2>Quick Add</h2>
+              <h2 data-i18n="quickAdd.title">Quick Add</h2>
             </div>
-            <p class="muted quick-add-hint">Type and press Enter to add.</p>
+            <p class="muted quick-add-hint" data-i18n="quickAdd.hint">Type and press Enter to add.</p>
             <div id="quickAddBody" class="quick-add-body">
               <form id="quickAddForm">
-                <input id="quickInput" type="text" placeholder="Add a task (Enter)" maxlength="120" required />
-                <input id="dueDateInput" type="date" aria-label="Due date" />
-                <select id="prioritySelect" aria-label="Priority">
-                  <option value="3">Low</option>
-                  <option value="2" selected>Normal</option>
-                  <option value="1">High</option>
-                </select>
-                <select id="bucketSelect" aria-label="Bucket">
-                  <option value="bucket1">Bucket 1</option>
-                  <option value="bucket2">Bucket 2</option>
-                  <option value="bucket3">Bucket 3</option>
-                  <option value="bucket4" selected>Bucket 4</option>
-                </select>
-                <button type="submit">Add</button>
+                <div class="quick-add-primary">
+                  <input
+                    id="quickInput"
+                    type="text"
+                    placeholder="Add a task (Enter)"
+                    data-i18n-placeholder="quickAdd.inputPlaceholder"
+                    maxlength="120"
+                    required
+                  />
+                  <button
+                    id="quickAddOptionsToggle"
+                    type="button"
+                    class="ghost-btn quick-add-options-toggle"
+                    aria-expanded="false"
+                    aria-controls="quickAddOptions"
+                    data-i18n="quickAdd.optionsOpen"
+                  >
+                    Options
+                  </button>
+                  <button type="submit" data-i18n="quickAdd.add">Add</button>
+                </div>
+                <div id="quickAddOptions" class="quick-add-options hidden">
+                  <input id="dueDateInput" type="date" aria-label="Due date" data-i18n-aria-label="quickAdd.dueDateAria" />
+                  <select id="prioritySelect" aria-label="Priority" data-i18n-aria-label="quickAdd.priorityAria">
+                    <option value="3" data-i18n="priority.low">Low</option>
+                    <option value="2" selected data-i18n="priority.normal">Normal</option>
+                    <option value="1" data-i18n="priority.high">High</option>
+                  </select>
+                  <select id="bucketSelect" aria-label="Bucket" data-i18n-aria-label="quickAdd.bucketAria">
+                    <option value="bucket1">Bucket 1</option>
+                    <option value="bucket2">Bucket 2</option>
+                    <option value="bucket3">Bucket 3</option>
+                    <option value="bucket4" selected>Bucket 4</option>
+                  </select>
+                </div>
               </form>
             </div>
           </section>
 
           <section class="todo-list-panel card" aria-label="Todo list">
             <div class="panel-head">
-              <h2>Tasks</h2>
+              <h2 data-i18n="sections.tasks">Tasks</h2>
               <span id="todoCount" class="count">0</span>
             </div>
             <ul id="todoList" class="todo-list"></ul>
@@ -105,34 +146,41 @@
         <section class="route-view" data-route-view="buckets" hidden>
           <section id="collabPanel" class="card collab-panel" aria-label="Bucket sharing">
             <div class="collab-panel-head">
-              <h2>Sharing</h2>
-              <p id="collabProfileBadge" class="muted">Login to use sharing features.</p>
+              <h2 data-i18n="sections.sharing">Sharing</h2>
+              <p id="collabProfileBadge" class="muted" data-i18n="collab.profileBadgeLogin">
+                Log in to configure shared buckets.
+              </p>
             </div>
 
             <form id="collabInviteForm" class="collab-invite-form">
-              <select id="collabInviteBucketSelect" aria-label="Select bucket to share"></select>
+              <select
+                id="collabInviteBucketSelect"
+                aria-label="Select sharing context"
+                data-i18n-aria-label="collab.sharedContextAria"
+              ></select>
               <input
                 id="collabInviteTargetInput"
                 type="text"
                 maxlength="20"
                 placeholder="Target public ID"
+                data-i18n-placeholder="collab.invitePlaceholder"
                 autocomplete="off"
                 disabled
               />
-              <button type="submit">Invite</button>
+              <button type="submit" data-i18n="collab.inviteButton">Invite</button>
             </form>
 
             <div class="collab-grid">
               <article>
-                <h3>Received</h3>
+                <h3 data-i18n="sections.received">Received</h3>
                 <ul id="collabReceivedInvites" class="todo-list"></ul>
               </article>
               <article>
-                <h3>Sent</h3>
+                <h3 data-i18n="sections.sent">Sent</h3>
                 <ul id="collabSentInvites" class="todo-list"></ul>
               </article>
               <article>
-                <h3>Members</h3>
+                <h3 data-i18n="sections.members">Members</h3>
                 <ul id="collabMembershipList" class="todo-list"></ul>
               </article>
             </div>
@@ -140,17 +188,21 @@
 
           <section class="card board-wrap" aria-label="Bucket board">
             <div class="board-toolbar">
-              <p class="muted board-toolbar-title">Board</p>
+              <p class="muted board-toolbar-title" data-i18n="sections.board">Board</p>
               <div class="board-toolbar-actions" role="presentation">
-                <button id="addProjectColumnBtn" type="button" class="project-add-btn">Add Bucket</button>
-                <button id="removeProjectColumnBtn" type="button" class="project-add-btn">Remove Bucket</button>
+                <button id="addProjectColumnBtn" type="button" class="project-add-btn" data-i18n="sections.addBucket">
+                  Add Bucket
+                </button>
+                <button id="removeProjectColumnBtn" type="button" class="project-add-btn" data-i18n="sections.removeBucket">
+                  Remove Bucket
+                </button>
               </div>
             </div>
 
             <section class="board">
               <article class="card column" data-bucket="bucket1">
                 <div class="column-head">
-                  <button type="button" class="column-drag-handle" aria-label="Move bucket">↕</button>
+                  <button type="button" class="column-drag-handle" aria-label="Move bucket">::</button>
                   <h2 id="bucket-title-bucket1" class="bucket-title" contenteditable="true" role="textbox" data-bucket="bucket1">
                     Bucket 1
                   </h2>
@@ -163,14 +215,8 @@
 
               <article class="card column" data-bucket="bucket2">
                 <div class="column-head">
-                  <button type="button" class="column-drag-handle" aria-label="Move bucket">↕</button>
-                  <h2
-                    id="bucket-title-bucket2"
-                    class="bucket-title"
-                    contenteditable="true"
-                    role="textbox"
-                    data-bucket="bucket2"
-                  >
+                  <button type="button" class="column-drag-handle" aria-label="Move bucket">::</button>
+                  <h2 id="bucket-title-bucket2" class="bucket-title" contenteditable="true" role="textbox" data-bucket="bucket2">
                     Bucket 2
                   </h2>
                   <div class="column-head-actions">
@@ -182,14 +228,8 @@
 
               <article class="card column" data-bucket="bucket3">
                 <div class="column-head">
-                  <button type="button" class="column-drag-handle" aria-label="Move bucket">↕</button>
-                  <h2
-                    id="bucket-title-bucket3"
-                    class="bucket-title"
-                    contenteditable="true"
-                    role="textbox"
-                    data-bucket="bucket3"
-                  >
+                  <button type="button" class="column-drag-handle" aria-label="Move bucket">::</button>
+                  <h2 id="bucket-title-bucket3" class="bucket-title" contenteditable="true" role="textbox" data-bucket="bucket3">
                     Bucket 3
                   </h2>
                   <div class="column-head-actions">
@@ -201,7 +241,7 @@
 
               <article class="card column" data-bucket="bucket4">
                 <div class="column-head">
-                  <button type="button" class="column-drag-handle" aria-label="Move bucket">↕</button>
+                  <button type="button" class="column-drag-handle" aria-label="Move bucket">::</button>
                   <h2 id="bucket-title-bucket4" class="bucket-title" contenteditable="true" role="textbox" data-bucket="bucket4">
                     Bucket 4
                   </h2>
@@ -218,35 +258,48 @@
         <section class="route-view" data-route-view="calendar" hidden>
           <section class="card calendar" aria-label="Calendar">
             <div class="calendar-head">
-              <h2>Calendar</h2>
+              <h2 data-i18n="nav.calendar">Calendar</h2>
               <div class="calendar-nav">
-                <button id="prevMonthBtn" type="button">◀ Prev</button>
+                <button id="prevMonthBtn" type="button" data-i18n="calendar.prevMonth">Prev</button>
                 <p id="calendarMonthLabel" class="muted"></p>
-                <button id="nextMonthBtn" type="button">Next ▶</button>
+                <button id="nextMonthBtn" type="button" data-i18n="calendar.nextMonth">Next</button>
               </div>
             </div>
 
             <form id="calendarForm" class="calendar-form hidden">
-              <input id="calendarDateInput" type="date" required aria-label="Calendar date" />
-              <div class="calendar-mode-switch" role="radiogroup" aria-label="Calendar item type">
-                <button type="button" class="calendar-mode-btn is-active" data-calendar-mode="note">Note</button>
-                <button type="button" class="calendar-mode-btn" data-calendar-mode="todo">Task</button>
+              <input id="calendarDateInput" type="date" required aria-label="Calendar date" data-i18n-aria-label="calendar.dateAria" />
+              <div class="calendar-mode-switch" role="radiogroup" aria-label="Calendar item type" data-i18n-aria-label="calendar.modeAria">
+                <button type="button" class="calendar-mode-btn is-active" data-calendar-mode="note" data-i18n="calendar.modeNote">
+                  Note
+                </button>
+                <button type="button" class="calendar-mode-btn" data-calendar-mode="todo" data-i18n="calendar.modeTodo">
+                  Task
+                </button>
               </div>
-              <button id="calendarSubmitBtn" type="submit">Save Note</button>
+              <button id="calendarSubmitBtn" type="submit" data-i18n="calendar.saveNote">Save Note</button>
               <textarea
                 id="calendarTextInput"
                 rows="3"
                 maxlength="140"
                 placeholder="Enter memo content."
+                data-i18n-placeholder="calendar.notePlaceholder"
               ></textarea>
               <div id="calendarTodoFields" class="calendar-mode-fields hidden">
-                <input id="calendarTodoTitleInput" type="text" maxlength="120" placeholder="Task title" />
+                <input
+                  id="calendarTodoTitleInput"
+                  type="text"
+                  maxlength="120"
+                  placeholder="Task title"
+                  data-i18n-placeholder="calendar.todoTitlePlaceholder"
+                />
                 <textarea
                   id="calendarTodoDetailInput"
                   rows="3"
                   maxlength="1200"
                   placeholder="Task details"
+                  data-i18n-placeholder="calendar.todoDetailsPlaceholder"
                   aria-label="Task details"
+                  data-i18n-aria-label="calendar.todoDetailsAria"
                 ></textarea>
               </div>
             </form>
@@ -269,6 +322,10 @@
               </div>
               <div class="calendar-detail-grid">
                 <article>
+                  <h4>Due</h4>
+                  <ul id="selectedDueList" class="report-list"></ul>
+                </article>
+                <article>
                   <h4>Created</h4>
                   <ul id="selectedCreatedList" class="report-list"></ul>
                 </article>
@@ -277,34 +334,40 @@
                   <ul id="selectedCompletedList" class="report-list"></ul>
                 </article>
                 <article>
-                  <h4>Notes</h4>
+                  <h4 data-i18n="calendar.notes">Notes</h4>
                   <div class="selected-note-composer">
                     <textarea
                       id="selectedDateNoteInput"
                       rows="2"
                       maxlength="1200"
                       placeholder="Add a note for this date"
+                      data-i18n-placeholder="calendar.selectedNotePlaceholder"
                       aria-label="Add note for selected date"
+                      data-i18n-aria-label="calendar.selectedNoteAria"
                     ></textarea>
                     <div class="selected-note-range">
                       <div class="selected-note-range-field">
-                        <label for="selectedDateNoteStartDate">Start</label>
+                        <label for="selectedDateNoteStartDate" data-i18n="calendar.rangeStart">Start</label>
                         <input
                           id="selectedDateNoteStartDate"
                           type="date"
                           aria-label="Note start date"
+                          data-i18n-aria-label="calendar.rangeStartAria"
                         />
                       </div>
                       <div class="selected-note-range-field">
-                        <label for="selectedDateNoteEndDate">End</label>
+                        <label for="selectedDateNoteEndDate" data-i18n="calendar.rangeEnd">End</label>
                         <input
                           id="selectedDateNoteEndDate"
                           type="date"
                           aria-label="Note end date"
+                          data-i18n-aria-label="calendar.rangeEndAria"
                         />
                       </div>
                     </div>
-                    <button id="addSelectedDateNoteBtn" type="button" class="ghost-btn">Add Note</button>
+                    <button id="addSelectedDateNoteBtn" type="button" class="ghost-btn" data-i18n="calendar.addNote">
+                      Add Note
+                    </button>
                   </div>
                   <ul id="selectedCalendarNoteList" class="report-list"></ul>
                 </article>
@@ -316,17 +379,45 @@
         <section class="route-view" data-route-view="report" hidden>
           <section class="card report" aria-label="Weekly report">
             <div class="report-head">
-              <h2>Weekly Report</h2>
+              <h2 data-i18n="sections.weeklyReport">Weekly Report</h2>
               <p id="weekRange" class="muted"></p>
+            </div>
+            <div class="report-kpi" aria-label="Weekly KPIs">
+              <div class="kpi-card">
+                <span class="kpi-value" id="reportKpiRate">—</span>
+                <span class="kpi-label">Completion Rate</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-value" id="reportKpiDone">—</span>
+                <span class="kpi-label">Done This Week</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-value" id="reportKpiPending">—</span>
+                <span class="kpi-label">Remaining</span>
+              </div>
+              <div class="kpi-card">
+                <span class="kpi-value" id="reportKpiWow">—</span>
+                <span class="kpi-label">vs Last Week</span>
+              </div>
+            </div>
+            <div class="report-charts">
+              <div class="report-chart-section">
+                <h3>By Bucket</h3>
+                <div id="reportDonutChart" class="donut-chart-wrap" aria-hidden="true"></div>
+              </div>
+              <div class="report-chart-section">
+                <h3>Daily Completions</h3>
+                <div id="reportBarChart" class="bar-chart-wrap" aria-hidden="true"></div>
+              </div>
             </div>
             <div class="report-grid">
               <article>
-                <h3>Done</h3>
+                <h3 data-i18n="sections.done">Done</h3>
                 <p id="weeklyDoneCount" class="muted"></p>
                 <ul id="weeklyDoneList" class="report-list"></ul>
               </article>
               <article>
-                <h3>Pending</h3>
+                <h3 data-i18n="sections.pending">Pending</h3>
                 <p id="weeklyPendingCount" class="muted"></p>
                 <ul id="weeklyPendingList" class="report-list"></ul>
               </article>
@@ -341,38 +432,60 @@
         <div class="todo-main">
           <span class="title"></span>
           <span class="meta"></span>
-          <a class="todo-detail-toggle" href="javascript:void(0)" role="button" aria-expanded="false">Details</a>
+          <a class="todo-detail-toggle" href="javascript:void(0)" role="button" aria-expanded="false" data-i18n="todo.details">
+            Details
+          </a>
           <div class="todo-collapsible" hidden>
-          <section class="todo-extra" aria-label="Subtasks and memos">
-            <div class="todo-subtask-composer">
-              <input
-                class="todo-subtask-input"
-                type="text"
-                maxlength="120"
-                placeholder="Add subtask"
-                aria-label="Add subtask"
-              />
-              <button class="todo-subtask-add" type="button">Add</button>
-            </div>
-            <ul class="todo-subtask-list"></ul>
-            <div class="todo-memo-composer">
+            <section class="todo-extra" aria-label="Subtasks and memos">
+              <div class="todo-detail-summary">
+                <span class="todo-detail-summary-item todo-detail-priority"></span>
+                <span class="todo-detail-summary-item todo-detail-due-date"></span>
+                <span class="todo-detail-summary-item todo-detail-bucket"></span>
+              </div>
               <textarea
-                class="todo-memo-input"
+                class="todo-detail-input"
                 rows="2"
                 maxlength="1200"
-                placeholder="Add memo (Ctrl+Enter to save)"
-                aria-label="Add memo"
+                placeholder="Task details"
+                data-i18n-placeholder="calendar.todoDetailsPlaceholder"
+                aria-label="Task details"
+                data-i18n-aria-label="calendar.todoDetailsAria"
               ></textarea>
-              <button class="todo-memo-add" type="button">Add Memo</button>
-            </div>
-            <ul class="todo-memo-list"></ul>
-          </section>
+              <div class="todo-subtask-composer">
+                <input
+                  class="todo-subtask-input"
+                  type="text"
+                  maxlength="120"
+                  placeholder="Add subtask"
+                  data-i18n-placeholder="todo.subtaskPlaceholder"
+                  aria-label="Add subtask"
+                  data-i18n-aria-label="todo.subtaskAria"
+                />
+                <button class="todo-subtask-add" type="button" data-i18n="quickAdd.add">Add</button>
+              </div>
+              <ul class="todo-subtask-list"></ul>
+              <div class="todo-memo-composer">
+                <textarea
+                  class="todo-memo-input"
+                  rows="2"
+                  maxlength="1200"
+                  placeholder="Add memo (Ctrl+Enter to save)"
+                  data-i18n-placeholder="todo.memoPlaceholder"
+                  aria-label="Add memo"
+                  data-i18n-aria-label="todo.memoAria"
+                ></textarea>
+                <button class="todo-memo-add" type="button" data-i18n="todo.addMemo">Add Memo</button>
+              </div>
+              <ul class="todo-memo-list"></ul>
+            </section>
           </div>
         </div>
         <div class="todo-controls">
           <div class="actions">
-            <button class="complete" type="button">Done</button>
-            <button class="delete" type="button" aria-label="Delete">Del</button>
+            <button class="complete" type="button" data-i18n="todo.done">Done</button>
+            <button class="delete" type="button" aria-label="Delete" data-i18n="todo.delete" data-i18n-aria-label="todo.delete">
+              Del
+            </button>
           </div>
         </div>
       </li>

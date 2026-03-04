@@ -54,6 +54,7 @@ let _deps = {
   queueSync: () => {},
   render: () => {},
   getBucketLabel: () => '',
+  showToast: () => {},
 };
 
 export function initTodoDeps({
@@ -77,6 +78,8 @@ export function initTodoDeps({
   queueSync,
   getProjectLaneName,
   syncBucketActionMenus,
+  getBucketLabel,
+  showToast,
 }) {
   if (typeof bindTodoDetailsInput === 'function') {
     _deps.bindTodoDetailsInput = bindTodoDetailsInput;
@@ -138,6 +141,12 @@ export function initTodoDeps({
   if (typeof syncBucketActionMenus === 'function') {
     _deps.syncBucketActionMenus = syncBucketActionMenus;
   }
+  if (typeof getBucketLabel === 'function') {
+    _deps.getBucketLabel = getBucketLabel;
+  }
+  if (typeof showToast === 'function') {
+    _deps.showToast = showToast;
+  }
 }
 
 export const todoUi = {
@@ -149,7 +158,7 @@ export function createTodo(payload) {
 }
 
 function getBucketLabel(bucket) {
-  return bucket;
+  return _deps.getBucketLabel(bucket);
 }
 
 function getProjectLaneName(projectLaneId) {
@@ -197,6 +206,17 @@ function buildTodoMetaText(todo) {
   const lane = _deps.getProjectLaneName(todo.projectLaneId);
   const projectText = lane ? ` / Lane: ${lane}` : '';
   return `Priority: ${priorityLabel[todo.priority] || 'Normal'}${dateText}${projectText}`;
+}
+
+function buildTodoDetailSummary(todo) {
+  const priority = priorityLabel[todo.priority] || 'Normal';
+  const dueDate = todo.dueDate || 'None';
+  const bucket = getBucketLabel(todo.bucket || 'bucket4') || (todo.bucket || 'bucket4');
+  return {
+    priority: `Priority: ${priority}`,
+    dueDate: `Due: ${dueDate}`,
+    bucket: `Bucket: ${bucket}`,
+  };
 }
 
 function renderTodoSubtaskList(listEl, todo, onUpdate) {
@@ -366,7 +386,18 @@ function bindTodoMemoComposer(inputEl, addBtn, listEl, todo) {
     inputEl.value = '';
     renderTodoMemoList(listEl, todo);
     queueSync();
-    inputEl.focus();
+    const composer = addBtn.closest('.todo-memo-composer');
+    if (composer) {
+      composer.classList.add('hidden');
+    }
+    const memoToggle = addBtn.closest('.todo-item')?.querySelector('.todo-memo-toggle');
+    if (memoToggle) {
+      memoToggle.setAttribute('aria-expanded', 'false');
+      memoToggle.focus();
+    } else {
+      inputEl.focus();
+    }
+    _deps.showToast('Memo saved.', 'success');
   };
 
   addBtn.addEventListener('click', submit);
@@ -387,6 +418,10 @@ function renderTodoItems(listEl, todos) {
     const item = todoTemplate.content.firstElementChild.cloneNode(true);
     const titleEl = item.querySelector('.title');
     const metaEl = item.querySelector('.meta');
+    const detailsEl = item.querySelector('.todo-detail-input');
+    const detailPriorityEl = item.querySelector('.todo-detail-priority');
+    const detailDueDateEl = item.querySelector('.todo-detail-due-date');
+    const detailBucketEl = item.querySelector('.todo-detail-bucket');
     const subtaskInputEl = item.querySelector('.todo-subtask-input');
     const subtaskAddBtn = item.querySelector('.todo-subtask-add');
     const subtaskListEl = item.querySelector('.todo-subtask-list');
@@ -422,10 +457,24 @@ function renderTodoItems(listEl, todos) {
         titleEl.blur();
       }
     });
+    const updateDetailSummary = () => {
+      const summary = buildTodoDetailSummary(todo);
+      if (detailPriorityEl) {
+        detailPriorityEl.textContent = summary.priority;
+      }
+      if (detailDueDateEl) {
+        detailDueDateEl.textContent = summary.dueDate;
+      }
+      if (detailBucketEl) {
+        detailBucketEl.textContent = summary.bucket;
+      }
+    };
     const updateMeta = () => {
       metaEl.textContent = buildTodoMetaText(todo);
+      updateDetailSummary();
     };
     updateMeta();
+    bindTodoDetailsInput(detailsEl, todo);
 
     if (subtaskComposer) {
       subtaskComposer.classList.add('hidden');
@@ -447,8 +496,11 @@ function renderTodoItems(listEl, todos) {
       if (hasContent) {
         collapsible.hidden = false;
         detailToggle.textContent = 'Collapse';
-        detailToggle.setAttribute('aria-expanded', 'true');
+      } else {
+        collapsible.hidden = true;
+        detailToggle.textContent = 'Details';
       }
+      detailToggle.setAttribute('aria-expanded', String(!collapsible.hidden));
       detailToggle.addEventListener('click', (e) => {
         e.preventDefault();
         const expanded = !collapsible.hidden;
