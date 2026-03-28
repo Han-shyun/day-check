@@ -3751,3 +3751,10 @@ h2 {
     min-height: clamp(82px, 22vw, 116px);
   }
 }
+
+.app-tab.avalon-tab {
+  color: #b8860b;
+}
+.app-tab.avalon-tab:hover {
+  color: #f0c040;
+}

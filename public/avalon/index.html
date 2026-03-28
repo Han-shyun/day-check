@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1a0a2e" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>아발론 — Avalon</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/avalon/avalon.css" />
+</head>
+<body>
+
+<!-- ░░░ 로딩 ░░░ -->
+<div id="screen-loading" class="screen active">
+  <div class="loading-orb"></div>
+  <p class="loading-text">아발론에 접속 중…</p>
+</div>
+
+<!-- ░░░ 로비 ░░░ -->
+<div id="screen-lobby" class="screen">
+  <header class="av-header">
+    <h1 class="av-title">⚔️ AVALON</h1>
+    <p class="av-subtitle">선과 악의 대결</p>
+  </header>
+
+  <div class="card av-card">
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="create">방 만들기</button>
+      <button class="tab-btn" data-tab="join">방 참가</button>
+    </div>
+
+    <div id="tab-create" class="tab-content active">
+      <label class="field-label">이름</label>
+      <input id="create-name" class="av-input" type="text" maxlength="16" placeholder="닉네임 입력" autocomplete="off" />
+      <button id="btn-create-room" class="av-btn primary">방 만들기</button>
+    </div>
+
+    <div id="tab-join" class="tab-content">
+      <label class="field-label">이름</label>
+      <input id="join-name" class="av-input" type="text" maxlength="16" placeholder="닉네임 입력" autocomplete="off" />
+      <label class="field-label">방 코드</label>
+      <input id="join-code" class="av-input code-input" type="text" maxlength="4" placeholder="XXXX" autocomplete="off" />
+      <button id="btn-join-room" class="av-btn primary">참가하기</button>
+    </div>
+
+    <p id="lobby-error" class="error-msg hidden"></p>
+  </div>
+
+  <div class="av-rules card av-card">
+    <h3>게임 방법</h3>
+    <p>5~10명이 선 진영과 악 진영으로 나뉩니다.<br/>
+    선 진영은 3번의 퀘스트를 성공시키고 메를린을 지켜야 이깁니다.<br/>
+    악 진영은 3번의 퀘스트를 실패시키거나 메를린을 암살하면 이깁니다.</p>
+  </div>
+</div>
+
+<!-- ░░░ 게임 방 ░░░ -->
+<div id="screen-room" class="screen">
+  <header class="av-header compact">
+    <div class="room-info">
+      <span class="room-code-label">방 코드</span>
+      <span id="display-room-code" class="room-code-value">----</span>
+      <button id="btn-copy-code" class="ghost-btn" title="복사">📋</button>
+    </div>
+    <div class="phase-badge" id="phase-badge">로비</div>
+  </header>
+
+  <!-- 플레이어 목록 -->
+  <div id="players-panel" class="card av-card">
+    <h2 class="panel-title">플레이어 <span id="player-count" class="count-badge">0</span></h2>
+    <ul id="player-list" class="player-list"></ul>
+    <button id="btn-start-game" class="av-btn primary hidden">게임 시작</button>
+    <p id="start-hint" class="muted-text">5~10명이 모이면 방장이 시작할 수 있어요.</p>
+  </div>
+
+  <!-- 역할 확인 단계 -->
+  <div id="panel-role-reveal" class="card av-card hidden">
+    <h2 class="panel-title">역할 확인</h2>
+    <p id="role-reveal-instruction" class="muted-text"></p>
+    <div id="role-reveal-my-turn" class="hidden">
+      <div class="role-card" id="my-role-card">
+        <div class="role-card-front">
+          <p class="role-card-tap">탭하여 역할 확인</p>
+        </div>
+        <div class="role-card-back hidden">
+          <div class="role-icon" id="role-icon">🛡️</div>
+          <div class="role-name" id="role-name">역할</div>
+          <div class="role-team" id="role-team"></div>
+          <div class="role-desc" id="role-desc"></div>
+          <div id="vision-panel" class="vision-panel hidden"></div>
+        </div>
+      </div>
+      <button id="btn-role-done" class="av-btn primary hidden">확인 완료 → 다음 사람에게 전달</button>
+    </div>
+    <div id="role-reveal-waiting" class="hidden">
+      <div class="waiting-spinner"></div>
+      <p class="muted-text">다른 플레이어가 역할을 확인 중...</p>
+    </div>
+  </div>
+
+  <!-- 퀘스트 현황 -->
+  <div id="panel-quests" class="card av-card hidden">
+    <h2 class="panel-title">퀘스트 현황</h2>
+    <div id="quest-track" class="quest-track"></div>
+    <div class="rejection-bar">
+      <span class="muted-text">연속 거부:</span>
+      <div id="rejection-dots" class="rejection-dots"></div>
+    </div>
+  </div>
+
+  <!-- 팀 제안 단계 -->
+  <div id="panel-propose" class="card av-card hidden">
+    <h2 class="panel-title">팀 제안</h2>
+    <p id="propose-info" class="muted-text"></p>
+    <div id="propose-leader-area" class="hidden">
+      <p class="field-label">퀘스트에 보낼 팀원을 선택하세요</p>
+      <ul id="propose-player-list" class="propose-list"></ul>
+      <button id="btn-propose" class="av-btn primary" disabled>팀 제안하기 (<span id="propose-selected-count">0</span>/<span id="propose-required">0</span>)</button>
+    </div>
+    <div id="propose-waiting-area" class="hidden">
+      <div class="waiting-spinner"></div>
+      <p class="muted-text">리더가 팀을 구성 중입니다...</p>
+    </div>
+  </div>
+
+  <!-- 투표 단계 -->
+  <div id="panel-vote" class="card av-card hidden">
+    <h2 class="panel-title">팀 투표</h2>
+    <p id="vote-proposed-team" class="muted-text"></p>
+    <div id="vote-status-bar" class="vote-status-bar"></div>
+    <div id="vote-buttons" class="vote-buttons">
+      <button id="btn-approve" class="av-btn approve-btn">✅ 승인</button>
+      <button id="btn-reject" class="av-btn reject-btn">❌ 거부</button>
+    </div>
+    <p id="vote-done-msg" class="muted-text hidden">투표 완료! 다른 플레이어를 기다리는 중...</p>
+  </div>
+
+  <!-- 투표 결과 -->
+  <div id="panel-vote-result" class="card av-card hidden">
+    <h2 class="panel-title">투표 결과</h2>
+    <div id="vote-result-summary" class="vote-result-summary"></div>
+    <ul id="vote-result-list" class="vote-result-list"></ul>
+    <button id="btn-proceed" class="av-btn primary">계속하기</button>
+  </div>
+
+  <!-- 퀘스트 진행 -->
+  <div id="panel-quest" class="card av-card hidden">
+    <h2 class="panel-title">퀘스트 진행</h2>
+    <p id="quest-info" class="muted-text"></p>
+    <div id="quest-vote-status-bar" class="vote-status-bar"></div>
+    <div id="quest-buttons" class="vote-buttons">
+      <button id="btn-quest-success" class="av-btn approve-btn">✅ 성공</button>
+      <button id="btn-quest-fail" class="av-btn reject-btn">💀 실패</button>
+    </div>
+    <p id="quest-done-msg" class="muted-text hidden">카드를 제출했습니다. 다른 팀원을 기다리는 중...</p>
+    <p id="quest-not-on-team" class="muted-text hidden">이번 퀘스트에 선발되지 않았습니다.</p>
+  </div>
+
+  <!-- 퀘스트 결과 -->
+  <div id="panel-quest-result" class="card av-card hidden">
+    <h2 class="panel-title">퀘스트 결과</h2>
+    <div id="quest-result-display" class="quest-result-display"></div>
+    <button id="btn-next-round" class="av-btn primary">다음 라운드</button>
+  </div>
+
+  <!-- 암살 단계 -->
+  <div id="panel-assassinate" class="card av-card hidden">
+    <h2 class="panel-title">🗡️ 암살</h2>
+    <p class="muted-text">선 진영이 3번의 퀘스트를 성공했습니다!<br/>암살자는 메를린을 지목하세요.</p>
+    <div id="assassin-area" class="hidden">
+      <ul id="assassinate-player-list" class="propose-list"></ul>
+      <button id="btn-assassinate" class="av-btn danger-btn" disabled>암살하기</button>
+    </div>
+    <div id="assassin-waiting" class="hidden">
+      <div class="waiting-spinner"></div>
+      <p class="muted-text">암살자가 메를린을 찾고 있습니다...</p>
+    </div>
+  </div>
+
+  <!-- 게임 종료 -->
+  <div id="panel-game-over" class="card av-card hidden">
+    <h2 class="panel-title">게임 종료</h2>
+    <div id="game-over-result" class="game-over-result"></div>
+    <div id="game-over-roles" class="game-over-roles"></div>
+    <button id="btn-restart" class="av-btn primary hidden">게임 재시작</button>
+  </div>
+
+  <p id="room-error" class="error-msg hidden"></p>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/avalon/avalon.js"></script>
+</body>
+</html>

@@ -1,0 +1,673 @@
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   아발론 - 전역 리셋 & 변수
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #0d0821;
+  --bg2:       #160d30;
+  --surface:   #1e1240;
+  --surface2:  #271850;
+  --border:    rgba(140,100,255,0.18);
+  --gold:      #f0c040;
+  --gold2:     #c8920a;
+  --good:      #4ade80;
+  --evil:      #f87171;
+  --accent:    #a78bfa;
+  --text:      #e2d9ff;
+  --muted:     #8b7fc0;
+  --radius:    14px;
+  --radius-sm: 8px;
+  --shadow:    0 8px 32px rgba(0,0,0,0.5);
+}
+
+html, body {
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Noto Sans KR', sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   스크린 전환
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.screen {
+  display: none;
+  min-height: 100dvh;
+  padding: 0 0 env(safe-area-inset-bottom);
+}
+.screen.active { display: block; }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   로딩
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+#screen-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+}
+.loading-orb {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin 1s linear infinite;
+}
+.loading-text { color: var(--muted); font-size: 14px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   공통 컴포넌트
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.hidden { display: none !important; }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.av-card {
+  margin: 12px 16px;
+  padding: 20px;
+}
+
+.av-btn {
+  display: block;
+  width: 100%;
+  padding: 14px 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity .15s, transform .1s;
+  margin-top: 12px;
+  letter-spacing: 0.02em;
+}
+.av-btn:active { transform: scale(.97); }
+.av-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.av-btn.primary {
+  background: linear-gradient(135deg, #7c3aed, #5b21b6);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(124,58,237,.4);
+}
+.av-btn.approve-btn {
+  background: linear-gradient(135deg, #16a34a, #15803d);
+  color: #fff;
+  width: calc(50% - 6px);
+  display: inline-block;
+  margin: 0;
+}
+.av-btn.reject-btn {
+  background: linear-gradient(135deg, #dc2626, #b91c1c);
+  color: #fff;
+  width: calc(50% - 6px);
+  display: inline-block;
+  margin: 0;
+}
+.av-btn.danger-btn {
+  background: linear-gradient(135deg, #9f1239, #881337);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(159,18,57,.4);
+}
+
+.ghost-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 18px;
+  padding: 4px;
+}
+
+.av-input {
+  width: 100%;
+  padding: 12px 14px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 15px;
+  outline: none;
+  transition: border-color .2s;
+  margin-top: 6px;
+  margin-bottom: 14px;
+}
+.av-input:focus { border-color: var(--accent); }
+.av-input.code-input {
+  text-align: center;
+  font-size: 28px;
+  font-family: 'Cinzel', serif;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+}
+
+.field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.muted-text { color: var(--muted); font-size: 13px; }
+
+.error-msg {
+  color: var(--evil);
+  font-size: 13px;
+  text-align: center;
+  padding: 8px;
+  margin: 0 16px;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   헤더
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.av-header {
+  text-align: center;
+  padding: 40px 20px 16px;
+}
+.av-header.compact {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.av-title {
+  font-family: 'Cinzel', serif;
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--gold);
+  text-shadow: 0 0 20px rgba(240,192,64,.4);
+  letter-spacing: 4px;
+}
+.av-subtitle {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 6px;
+  letter-spacing: 0.1em;
+}
+
+.room-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.room-code-label { font-size: 12px; color: var(--muted); }
+.room-code-value {
+  font-family: 'Cinzel', serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--gold);
+  letter-spacing: 3px;
+}
+
+.phase-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--accent);
+  letter-spacing: 0.05em;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   탭
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  background: var(--bg2);
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+.tab-btn {
+  flex: 1;
+  padding: 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all .2s;
+}
+.tab-btn.active {
+  background: var(--surface2);
+  color: var(--text);
+  box-shadow: 0 2px 8px rgba(0,0,0,.3);
+}
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   플레이어 목록
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.panel-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--gold);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.count-badge {
+  font-size: 12px;
+  background: var(--surface2);
+  padding: 2px 8px;
+  border-radius: 12px;
+  color: var(--accent);
+}
+
+.player-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.player-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 14px;
+}
+.player-item .player-avatar {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), #6d28d9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+.player-item .player-name { flex: 1; font-weight: 500; }
+.player-item .player-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.player-item .player-tag.host { background: rgba(240,192,64,.15); color: var(--gold); }
+.player-item .player-tag.you { background: rgba(167,139,250,.15); color: var(--accent); }
+.player-item .player-tag.leader { background: rgba(74,222,128,.15); color: var(--good); }
+.player-item .player-tag.disconnected { background: rgba(107,114,128,.15); color: #6b7280; }
+
+/* 역할 배지 (게임 종료 시) */
+.player-item .role-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+.player-item .role-badge.good { background: rgba(74,222,128,.15); color: var(--good); }
+.player-item .role-badge.evil { background: rgba(248,113,113,.15); color: var(--evil); }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   역할 카드
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.role-card {
+  cursor: pointer;
+  perspective: 1000px;
+  margin: 16px 0;
+}
+.role-card-front {
+  padding: 36px;
+  background: linear-gradient(135deg, #2d1b69, #1e1240);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+  transition: transform .3s;
+}
+.role-card-tap {
+  color: var(--muted);
+  font-size: 14px;
+  letter-spacing: 0.05em;
+}
+.role-card-back {
+  padding: 28px 20px;
+  background: linear-gradient(135deg, #1e1240, #0d0821);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  text-align: center;
+  animation: flipIn .4s ease;
+}
+@keyframes flipIn {
+  from { opacity: 0; transform: rotateY(90deg); }
+  to   { opacity: 1; transform: rotateY(0); }
+}
+
+.role-icon { font-size: 52px; margin-bottom: 12px; }
+.role-name {
+  font-size: 22px;
+  font-weight: 700;
+  font-family: 'Cinzel', serif;
+  color: var(--gold);
+  margin-bottom: 6px;
+}
+.role-team {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 4px 12px;
+  border-radius: 12px;
+  display: inline-block;
+  margin-bottom: 14px;
+}
+.role-team.good { background: rgba(74,222,128,.15); color: var(--good); }
+.role-team.evil { background: rgba(248,113,113,.15); color: var(--evil); }
+
+.role-desc { font-size: 13px; color: var(--muted); margin-bottom: 14px; }
+
+.vision-panel {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  text-align: left;
+  margin-top: 12px;
+}
+.vision-panel h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+}
+.vision-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+}
+.vision-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.vision-dot.evil { background: var(--evil); }
+.vision-dot.merlin-candidate { background: var(--gold); }
+.vision-dot.evil-ally { background: var(--evil); }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   퀘스트 트래커
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.quest-track {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+.quest-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+.quest-node-circle {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  transition: all .3s;
+}
+.quest-node.current .quest-node-circle {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(167,139,250,.4);
+  background: var(--surface2);
+  color: var(--accent);
+}
+.quest-node.success .quest-node-circle {
+  border-color: var(--good);
+  background: rgba(74,222,128,.15);
+  color: var(--good);
+}
+.quest-node.fail .quest-node-circle {
+  border-color: var(--evil);
+  background: rgba(248,113,113,.15);
+  color: var(--evil);
+}
+.quest-node-label { font-size: 11px; color: var(--muted); }
+.quest-node-size { font-size: 10px; color: var(--muted); }
+
+.rejection-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rejection-dots {
+  display: flex;
+  gap: 6px;
+}
+.rejection-dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--bg2);
+  transition: all .3s;
+}
+.rejection-dot.filled {
+  background: var(--evil);
+  border-color: var(--evil);
+  box-shadow: 0 0 6px rgba(248,113,113,.4);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   팀 제안 리스트
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.propose-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.propose-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--bg2);
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--border);
+  cursor: pointer;
+  transition: all .2s;
+  font-size: 14px;
+}
+.propose-item:hover { border-color: var(--accent); }
+.propose-item.selected {
+  border-color: var(--accent);
+  background: rgba(167,139,250,.1);
+}
+.propose-item .check-icon { font-size: 18px; margin-left: auto; opacity: 0; transition: opacity .2s; }
+.propose-item.selected .check-icon { opacity: 1; }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   투표
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.vote-buttons {
+  display: flex;
+  gap: 12px;
+  margin-top: 14px;
+}
+.vote-status-bar {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.vote-chip {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+}
+.vote-chip.voted { background: rgba(167,139,250,.15); border-color: var(--accent); }
+
+.vote-result-summary {
+  text-align: center;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+.vote-result-summary.approved {
+  background: rgba(74,222,128,.1);
+  color: var(--good);
+  border: 1px solid rgba(74,222,128,.3);
+}
+.vote-result-summary.rejected {
+  background: rgba(248,113,113,.1);
+  color: var(--evil);
+  border: 1px solid rgba(248,113,113,.3);
+}
+
+.vote-result-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+.vote-result-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  background: var(--bg2);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.vote-result-item .vote-val {
+  font-weight: 700;
+  font-size: 13px;
+}
+.vote-result-item .vote-val.approve { color: var(--good); }
+.vote-result-item .vote-val.reject { color: var(--evil); }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   퀘스트 결과
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.quest-result-display {
+  text-align: center;
+  padding: 20px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 14px;
+  font-size: 16px;
+  font-weight: 700;
+}
+.quest-result-display.success {
+  background: rgba(74,222,128,.1);
+  color: var(--good);
+  border: 1px solid rgba(74,222,128,.3);
+}
+.quest-result-display.fail {
+  background: rgba(248,113,113,.1);
+  color: var(--evil);
+  border: 1px solid rgba(248,113,113,.3);
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   게임 종료
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.game-over-result {
+  text-align: center;
+  padding: 24px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  font-size: 20px;
+  font-weight: 700;
+  font-family: 'Cinzel', serif;
+}
+.game-over-result.good-wins {
+  background: rgba(74,222,128,.12);
+  color: var(--good);
+  border: 2px solid rgba(74,222,128,.4);
+}
+.game-over-result.evil-wins {
+  background: rgba(248,113,113,.12);
+  color: var(--evil);
+  border: 2px solid rgba(248,113,113,.4);
+}
+
+.game-over-roles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   대기 스피너
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.waiting-spinner {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin 1s linear infinite;
+  margin: 12px auto;
+}
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   규칙 박스
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.av-rules {
+  padding: 18px 20px;
+  margin-bottom: 32px;
+}
+.av-rules h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--gold);
+  margin-bottom: 8px;
+}
+.av-rules p { font-size: 13px; color: var(--muted); line-height: 1.7; }
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   반응형
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+@media (min-width: 480px) {
+  .av-card { max-width: 440px; margin-left: auto; margin-right: auto; }
+}

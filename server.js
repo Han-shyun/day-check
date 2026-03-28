@@ -1,4 +1,5 @@
 ﻿const express = require('express');
+const http = require('http');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const cookieParser = require('cookie-parser');
@@ -6,6 +7,8 @@ const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { Server: SocketIO } = require('socket.io');
+const { attachHandlers: attachAvalonHandlers } = require('./server/modules/avalon/socketHandlers');
 require('dotenv').config();
 
 const app = express();
@@ -2189,7 +2192,18 @@ function createCollabRouter() {
   return collabRouterInstance;
 }
 
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      'script-src': ["'self'", 'https://fonts.googleapis.com'],
+      'style-src':  ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://fonts.gstatic.com'],
+      'font-src':   ["'self'", 'https://fonts.gstatic.com'],
+      'connect-src': ["'self'", 'ws:', 'wss:'],
+      'img-src':    ["'self'", 'data:'],
+    },
+  },
+}));
 app.use(
   rateLimit({
     windowMs: 60 * 1000,
@@ -2273,6 +2287,15 @@ app.get('/sw.js', (req, res) => {
   res.sendFile(path.join(PUBLIC_ROOT, 'sw.js'));
 });
 
+// ── 아발론 정적 파일 ──────────────────────────────────────────
+app.use('/avalon', express.static(path.join(__dirname, 'public/avalon'), {
+  setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache'); },
+}));
+app.get('/avalon', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.sendFile(path.join(__dirname, 'public/avalon/index.html'));
+});
+
 app.use(
   express.static(PUBLIC_ROOT, {
     setHeaders: (res, filePath) => {
@@ -2339,9 +2362,15 @@ function startServer() {
       }, 60 * 1000);
 
       return new Promise((resolve) => {
-        const server = app.listen(PORT, () => {
+        const httpServer = http.createServer(app);
+        const io = new SocketIO(httpServer, {
+          cors: { origin: false },
+          transports: ['websocket', 'polling'],
+        });
+        attachAvalonHandlers(io);
+        httpServer.listen(PORT, () => {
           console.log(`day-check server listening on http://localhost:${PORT}`);
-          resolve(server);
+          resolve(httpServer);
         });
       });
     });
